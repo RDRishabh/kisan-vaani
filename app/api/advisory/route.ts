@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { generateContentResilient } from "@/lib/genai";
 import { FALLBACK_ADVISORY, type Lang } from "@/lib/data";
 import { LANG_NAME_FOR_PROMPT } from "@/lib/i18n-full";
 
@@ -37,8 +38,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    const result = await generateContentResilient(ai, {
       contents: `A farmer contacted the KisanVaani crop advisory line. Their message (may be shorthand SMS code or spoken sentence): "${query}"`,
       config: {
         systemInstruction: `You are KisanVaani, an expert Indian agricultural extension advisor (like a Krishi Vigyan Kendra scientist). You give practical, safe, low-cost advice suited to smallholder farmers in India. Prefer IPM/organic first, then chemical options with exact dosages. Respond ONLY in ${LANG_NAME_FOR_PROMPT[lang] || LANG_NAME_FOR_PROMPT.hi}.\n${channelRules}`,

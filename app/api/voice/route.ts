@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
+import { generateContentResilient } from "@/lib/genai";
 import { FALLBACK_ADVISORY } from "@/lib/data";
 import type { VoiceResult } from "@/lib/types";
 
@@ -45,8 +46,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    const result = await generateContentResilient(ai, {
       contents: [
         {
           role: "user",

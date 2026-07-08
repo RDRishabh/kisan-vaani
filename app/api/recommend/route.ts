@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
+import { generateContentResilient } from "@/lib/genai";
 import { DISTRICTS } from "@/lib/districts";
 import { LANG_NAME_FOR_PROMPT } from "@/lib/i18n-full";
 import { AGRONOMY_TABLE, scoreCrops, type WaterSource } from "@/lib/agronomy";
@@ -118,8 +119,7 @@ export async function POST(req: NextRequest) {
   try {
     const ai = new GoogleGenAI({ apiKey });
     const langName = LANG_NAME_FOR_PROMPT[lang] || LANG_NAME_FOR_PROMPT.hi;
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    const result = await generateContentResilient(ai, {
       contents: buildPrompt(profile, soil, {
         district, state, season, waterSource, landAcres, langName, shc: hasShc ? shc : undefined,
       }),
