@@ -3,6 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { generateContentResilient } from "@/lib/genai";
 import { FALLBACK_ADVISORY } from "@/lib/data";
 import type { VoiceResult } from "@/lib/types";
+import { logQuery } from "@/lib/db";
 
 // Deterministic fallback so the demo never errors in front of judges:
 // a realistic Hindi voice interaction (the most likely demo language).
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || !audio) {
+    logQuery({ channel: "voice", lang: CACHED_VOICE.detectedLangCode, query: CACHED_VOICE.transcript, responseSource: "cached" });
     return NextResponse.json(CACHED_VOICE);
   }
 
@@ -91,9 +93,11 @@ export async function POST(req: NextRequest) {
       replyEnglish: parsed.replyEnglish || "",
       source: "gemini",
     };
+    logQuery({ channel: "voice", lang: out.detectedLangCode, query: out.transcript, responseSource: "gemini" });
     return NextResponse.json(out);
   } catch (err) {
     console.error("voice gemini error:", err instanceof Error ? err.message : err);
+    logQuery({ channel: "voice", lang: CACHED_VOICE.detectedLangCode, query: CACHED_VOICE.transcript, responseSource: "cached" });
     return NextResponse.json(CACHED_VOICE);
   }
 }

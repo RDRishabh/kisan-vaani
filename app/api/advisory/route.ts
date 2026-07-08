@@ -3,6 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import { generateContentResilient } from "@/lib/genai";
 import { FALLBACK_ADVISORY, type Lang } from "@/lib/data";
 import { LANG_NAME_FOR_PROMPT } from "@/lib/i18n-full";
+import { logQuery } from "@/lib/db";
 
 // Fallback advisories exist for hi/en/mr/te; every other language code degrades to Hindi.
 function fallbackText(lang: string, channel: "ivr" | "sms"): string {
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
+    logQuery({ channel: channel === "sms" ? "sms" : "call", lang, query, responseSource: "fallback" });
     return NextResponse.json({ text: fallbackText(lang, channel), source: "fallback" });
   }
 
@@ -47,9 +49,11 @@ export async function POST(req: NextRequest) {
     });
     const text = result.text?.trim();
     if (!text) throw new Error("empty response");
+    logQuery({ channel: channel === "sms" ? "sms" : "call", lang, query, responseSource: "gemini" });
     return NextResponse.json({ text, source: "gemini" });
   } catch (err) {
     console.error("advisory gemini error:", err instanceof Error ? err.message : err);
+    logQuery({ channel: channel === "sms" ? "sms" : "call", lang, query, responseSource: "fallback" });
     return NextResponse.json({ text: fallbackText(lang, channel), source: "fallback" });
   }
 }

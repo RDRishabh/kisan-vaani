@@ -3,6 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { generateContentResilient } from "@/lib/genai";
 import { FALLBACK_DIAGNOSIS } from "@/lib/data";
 import { LANG_NAME_FOR_PROMPT } from "@/lib/i18n-full";
+import { logQuery } from "@/lib/db";
 
 const SCHEMA = {
   type: Type.OBJECT,
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
+    logQuery({ channel: "photo", lang, query: `photo diagnosis: ${FALLBACK_DIAGNOSIS.disease_en}`, responseSource: "fallback" });
     return NextResponse.json({ ...FALLBACK_DIAGNOSIS, is_plant: true, source: "fallback" });
   }
 
@@ -66,9 +68,16 @@ export async function POST(req: NextRequest) {
     });
     const parsed = JSON.parse(result.text || "{}");
     if (typeof parsed.is_plant !== "boolean") throw new Error("bad shape");
+    logQuery({
+      channel: "photo",
+      lang,
+      query: `photo diagnosis: ${parsed.is_plant === false ? "not a plant" : parsed.disease_en || "unidentified"}`,
+      responseSource: "gemini",
+    });
     return NextResponse.json({ ...parsed, source: "gemini" });
   } catch (err) {
     console.error("diagnose gemini error:", err instanceof Error ? err.message : err);
+    logQuery({ channel: "photo", lang, query: `photo diagnosis: ${FALLBACK_DIAGNOSIS.disease_en}`, responseSource: "fallback" });
     return NextResponse.json({ ...FALLBACK_DIAGNOSIS, is_plant: true, source: "fallback" });
   }
 }

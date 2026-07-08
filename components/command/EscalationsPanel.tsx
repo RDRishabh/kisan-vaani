@@ -3,7 +3,18 @@
 import { useMemo, useState } from "react";
 import { Camera, Check, ChevronDown, ChevronUp, UserRound, BadgeCheck } from "lucide-react";
 import type { EscalationStatus, EscalationTicket } from "@/lib/types";
+import type { LiveTicket } from "@/lib/ops-live";
 import { ChannelBadge, EmptyState, SectionCard, SeverityChip, StatusPill, Td, Th, fmtDateTime } from "./ui";
+
+// Marks tickets persisted in the database (created by the live demo surfaces).
+function LivePill() {
+  return (
+    <span className="ml-1.5 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700 align-middle">
+      <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+      Live
+    </span>
+  );
+}
 
 const STATUS_FILTERS: { id: EscalationStatus | "all"; label: string }[] = [
   { id: "all", label: "All" },
@@ -39,7 +50,7 @@ function ConfidenceBar({ pct }: { pct: number }) {
 
 export default function EscalationsPanel({ district, tickets, onUpdate }: {
   district: string;
-  tickets: EscalationTicket[];
+  tickets: LiveTicket[];
   onUpdate: (id: string, patch: Partial<EscalationTicket>) => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<EscalationStatus | "all">("all");
@@ -106,7 +117,10 @@ export default function EscalationsPanel({ district, tickets, onUpdate }: {
                   const open = expanded === t.id;
                   return [
                     <tr key={t.id} className={`cursor-pointer ${open ? "bg-slate-50" : "hover:bg-slate-50"}`} onClick={() => setExpanded(open ? null : t.id)}>
-                      <Td className="font-medium tabular-nums text-slate-900">{t.id}</Td>
+                      <Td className="font-medium tabular-nums text-slate-900">
+                        {t.id}
+                        {t.live && <LivePill />}
+                      </Td>
                       <Td className="tabular-nums text-slate-500">{fmtDateTime(t.createdAt)}</Td>
                       <Td>
                         <span className="font-medium text-slate-900">{t.farmer}</span>

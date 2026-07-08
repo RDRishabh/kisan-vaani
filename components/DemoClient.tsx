@@ -24,6 +24,7 @@ import { DISTRICTS } from "@/lib/districts";
 import { LANGS_FULL, T_FULL, SAMPLE_QUERIES_FULL } from "@/lib/i18n-full";
 import { speak, stopSpeaking, createRecognizer } from "@/lib/speech";
 import { startRecording, stopRecording } from "@/lib/recorder";
+import { createLiveTicket } from "@/lib/ops-live";
 import type { VoiceResult, MandiResponse } from "@/lib/types";
 
 type Mode = "call" | "sms" | "photo";
@@ -102,7 +103,8 @@ export default function DemoClient() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [activeCase, setActiveCase] = useState<string | null>(null);
   const [speaking, setSpeaking] = useState(false);
-  const [kvkTicket, setKvkTicket] = useState<string | null>(null);
+  const [kvkTicket, setKvkTicket] = useState<{ id: string; kendra: string } | null>(null);
+  const [kvkReferring, setKvkReferring] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -343,6 +345,32 @@ export default function DemoClient() {
       setDiagLoading(false);
     };
     reader.readAsDataURL(file);
+  };
+
+  // Escalate the current diagnosis to a real ticket via /api/tickets; the
+  // returned id and kendra come from the database. Falls back to the previous
+  // local ticket behaviour if the API is unreachable.
+  const referToExpert = async () => {
+    if (!diag || kvkReferring) return;
+    setKvkReferring(true);
+    const d = DISTRICTS[0];
+    const ticket = await createLiveTicket({
+      farmer: "Demo farmer",
+      village: d?.blocks[0] ?? "Sehore",
+      district: d?.district ?? "Sehore",
+      state: d?.state ?? "Madhya Pradesh",
+      channel: "photo",
+      crop: diag.plant,
+      aiDiagnosis: `${diag.disease_en}${diag.disease_scientific ? ` (${diag.disease_scientific})` : ""}`,
+      confidence: diag.confidence,
+      severity: diag.severity,
+    });
+    setKvkReferring(false);
+    setKvkTicket(
+      ticket
+        ? { id: ticket.id, kendra: ticket.kendra }
+        : { id: `RSK-${1000 + Math.floor(Math.random() * 9000)}`, kendra: "KVK Sehore" }
+    );
   };
 
   const listenSummary = () => {
@@ -848,16 +876,17 @@ export default function DemoClient() {
                     {/* Escalate to human expert (RSK/KVK) */}
                     {!kvkTicket ? (
                       <button
-                        onClick={() => setKvkTicket(`RSK-${1000 + Math.floor(Math.random() * 9000)}`)}
-                        className="mt-4 w-full rounded-xl border-2 border-forest/30 text-forest py-3 text-sm font-semibold hover:bg-leaf-mist/40 transition"
+                        onClick={() => void referToExpert()}
+                        disabled={kvkReferring}
+                        className="mt-4 w-full rounded-xl border-2 border-forest/30 text-forest py-3 text-sm font-semibold hover:bg-leaf-mist/40 transition disabled:opacity-60"
                       >
-                        Refer to a KVK / Rythu Seva Kendra expert
+                        {kvkReferring ? "Creating ticket…" : "Refer to a KVK / Rythu Seva Kendra expert"}
                       </button>
                     ) : (
                       <div className="mt-4 flex items-start gap-2 rounded-xl bg-leaf-mist/60 border border-leaf/40 p-3 text-sm text-forest rise">
                         <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" aria-hidden />
                         <span>
-                          <b>Ticket {kvkTicket} created</b> · KVK Sehore · response within 48 hours
+                          <b>Ticket {kvkTicket.id} created</b> · {kvkTicket.kendra} · response within 48 hours
                         </span>
                       </div>
                     )}
@@ -903,6 +932,17 @@ export default function DemoClient() {
                   {(mode === "call" ? callSource : smsSource) === "gemini" ? "Source: live Gemini 2.5 Flash response" : (mode === "call" ? callSource : smsSource) === "agmarknet" ? "Source: live Agmarknet mandi prices" : "Source: cached fallback response (offline-safe)"}
                 </div>
               )}
+            </div>
+
+            {/* Live test line */}
+            <div className="rounded-2xl bg-white border border-forest/15 p-5 text-sm text-ink-soft">
+              <b className="text-ink">A real line is connected.</b> The same IVR and SMS pipeline shown here answers a
+              live Twilio number: <span className="font-medium text-ink whitespace-nowrap">+1 254 272 6372</span>. Call it
+              and describe a crop problem after the menu, or text shorthand such as{" "}
+              <span className="font-mono text-xs">KAPAS PILA PATTA</span> — the reply comes from the same Gemini advisory
+              engine, and the query appears in the command centre. It is a US trial number (a short Twilio notice plays
+              first, and international rates apply from India); the production deployment uses an Indian toll-free line
+              via Exotel with DLT-registered SMS.
             </div>
 
             {/* Why this matters */}

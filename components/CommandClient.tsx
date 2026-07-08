@@ -4,10 +4,18 @@
 // White-theme, data-first console: overview KPIs + charts, weather alerts,
 // disease outbreaks, RSK/KVK escalation queue, broadcast log, farmer registry.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleCheck } from "lucide-react";
 import type { EscalationTicket } from "@/lib/types";
-import { BROADCAST_SEED, ESCALATIONS, type BroadcastRecord } from "@/lib/opsData";
+import { BROADCAST_SEED, ESCALATIONS } from "@/lib/opsData";
+import {
+  createLiveBroadcast,
+  fetchLiveBroadcasts,
+  fetchLiveTickets,
+  patchLiveTicket,
+  type LiveBroadcast,
+  type LiveTicket,
+} from "@/lib/ops-live";
 import Sidebar, { type OpsTab } from "./command/Sidebar";
 import TopBar from "./command/TopBar";
 import KpiCards from "./command/KpiCards";
@@ -24,16 +32,43 @@ export default function CommandClient() {
   const [tab, setTab] = useState<OpsTab>("overview");
   const [district, setDistrict] = useState("All districts");
 
-  // escalation tickets are mutable local state (assign / reply / close actions)
-  const [tickets, setTickets] = useState<EscalationTicket[]>(ESCALATIONS);
+  // escalation tickets are mutable local state (assign / reply / close actions);
+  // rows fetched from /api/tickets carry live=true and persist edits via PATCH
+  const [tickets, setTickets] = useState<LiveTicket[]>(ESCALATIONS);
+  const liveTicketIds = useRef<Set<string>>(new Set());
   const updateTicket = useCallback((id: string, patch: Partial<EscalationTicket>) => {
     setTickets((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+    if (liveTicketIds.current.has(id)) {
+      patchLiveTicket(id, {
+        status: patch.status,
+        officer: patch.officer ?? undefined,
+        kendra: patch.kendra,
+      });
+    }
   }, []);
 
   // broadcast log grows as the composer queues sends
-  const [broadcasts, setBroadcasts] = useState<BroadcastRecord[]>(BROADCAST_SEED);
+  const [broadcasts, setBroadcasts] = useState<LiveBroadcast[]>(BROADCAST_SEED);
   const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null);
   const nextBrdId = useRef(1042);
+
+  // merge persisted rows on top of the seed data on mount; seed rows stay so
+  // the console keeps its operating-at-scale look
+  useEffect(() => {
+    let cancelled = false;
+    void fetchLiveTickets().then((live) => {
+      if (cancelled || live.length === 0) return;
+      live.forEach((t) => liveTicketIds.current.add(t.id));
+      setTickets((prev) => [...live.filter((t) => !prev.some((p) => p.id === t.id)), ...prev]);
+    });
+    void fetchLiveBroadcasts().then((live) => {
+      if (cancelled || live.length === 0) return;
+      setBroadcasts((prev) => [...live.filter((b) => !prev.some((p) => p.id === b.id)), ...prev]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -46,7 +81,7 @@ export default function CommandClient() {
   const queueBroadcast = useCallback(
     ({ target, message, channels }: { target: ComposeTarget; message: string; channels: string[] }) => {
       const id = `BRD-${nextBrdId.current++}`;
-      const rec: BroadcastRecord = {
+      const rec: LiveBroadcast = {
         id,
         createdAt: new Date().toISOString(),
         kind: target.kind,
@@ -64,6 +99,20 @@ export default function CommandClient() {
       };
       setBroadcasts((prev) => [rec, ...prev]);
       showToast(`Broadcast queued · #${id}`);
+      // persist to /api/broadcasts; on success mark the local row live so the
+      // console shows which sends are database-backed
+      void createLiveBroadcast({
+        kind: target.kind,
+        title: target.title,
+        district: target.district,
+        state: target.state,
+        language: target.language,
+        channels,
+        recipients: target.recipients,
+        message,
+      }).then((saved) => {
+        if (saved) setBroadcasts((prev) => prev.map((b) => (b.id === id ? { ...b, live: true } : b)));
+      });
       // simulate the gateway completing the send
       setTimeout(() => {
         setBroadcasts((prev) =>

@@ -1,5 +1,16 @@
 import type { BroadcastRecord } from "@/lib/opsData";
+import type { LiveBroadcast } from "@/lib/ops-live";
 import { EmptyState, SectionCard, StatusPill, TableShell, Td, Th, fmtDateTime, nf } from "./ui";
+
+// Marks broadcasts persisted in the database (queued through the composer).
+function LivePill() {
+  return (
+    <span className="ml-1.5 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700 align-middle">
+      <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+      Live
+    </span>
+  );
+}
 
 const KIND_LABEL: Record<BroadcastRecord["kind"], string> = {
   weather: "Weather",
@@ -14,7 +25,7 @@ function pct(part: number, whole: number): string {
 
 export default function BroadcastsPanel({ district, broadcasts }: {
   district: string;
-  broadcasts: BroadcastRecord[];
+  broadcasts: LiveBroadcast[];
 }) {
   const rows = broadcasts.filter(
     (b) => district === "All districts" || b.district === district || b.district === "All districts"
@@ -49,7 +60,10 @@ export default function BroadcastsPanel({ district, broadcasts }: {
             <tbody>
               {rows.map((b) => (
                 <tr key={b.id} className="hover:bg-slate-50" title={b.message}>
-                  <Td className="font-medium tabular-nums text-slate-900">#{b.id}</Td>
+                  <Td className="font-medium tabular-nums text-slate-900">
+                    #{b.id}
+                    {b.live && <LivePill />}
+                  </Td>
                   <Td className="tabular-nums text-slate-500">{fmtDateTime(b.createdAt)}</Td>
                   <Td>
                     <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">

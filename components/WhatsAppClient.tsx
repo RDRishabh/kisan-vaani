@@ -23,6 +23,8 @@ import {
 } from "lucide-react";
 import type { VoiceResult } from "@/lib/types";
 import { speak, stopSpeaking } from "@/lib/speech";
+import { createLiveTicket } from "@/lib/ops-live";
+import { DISTRICTS } from "@/lib/districts";
 
 // ---------- WhatsApp UI constants (verified spec in research/whatsapp-sms.json) ----------
 const WA = {
@@ -68,6 +70,7 @@ type Msg = {
   imageUrl?: string;
   voice?: { duration: number; ttsText?: string; ttsLang?: string; hasAudio?: boolean };
   diag?: Diagnosis;
+  referred?: boolean; // diagnosis card already escalated to an expert ticket
 };
 
 // ---------- Cached fallbacks (page must work fully standalone) ----------
@@ -342,6 +345,41 @@ export default function WhatsAppClient() {
           voice: { duration: estSeconds(diag.voice_summary), ttsText: diag.voice_summary, ttsLang: "hi-IN" },
         });
       }, 500);
+    },
+    [addMsg, sendOutgoing]
+  );
+
+  // ---------- b2) Escalate a diagnosis card to a real /api/tickets ticket ----------
+  const referToExpert = useCallback(
+    async (m: Msg) => {
+      const d = m.diag;
+      if (!d || m.referred) return;
+      setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, referred: true } : x)));
+      sendOutgoing({ id: uid(), kind: "text", text: "Expert se baat karani hai 🙏" });
+      setTimeout(() => setTyping(true), 500);
+      const home = DISTRICTS[0];
+      const ticket = await createLiveTicket({
+        farmer: "WhatsApp farmer",
+        village: home?.blocks[0] ?? "Sehore",
+        district: home?.district ?? "Sehore",
+        state: home?.state ?? "Madhya Pradesh",
+        channel: "whatsapp",
+        crop: d.plant,
+        aiDiagnosis: `${d.disease_en}${d.disease_scientific ? ` (${d.disease_scientific})` : ""}`,
+        confidence: d.confidence,
+        severity: d.severity,
+      });
+      // API unreachable → keep the demo alive with a locally generated ticket.
+      const id = ticket?.id ?? `RSK-${1000 + Math.floor(Math.random() * 9000)}`;
+      const kendra = ticket?.kendra ?? "KVK Sehore";
+      setTyping(false);
+      addMsg({
+        id: uid(),
+        dir: "in",
+        kind: "text",
+        text: `✅ Ticket ${id} ban gaya hai. ${kendra} ke krishi visheshagya 48 ghante ke andar aapse sampark karenge. Zaroorat padne par Kisan Call Centre 1800-180-1551 par bhi baat kar sakte hain.`,
+        time: fmtTime(),
+      });
     },
     [addMsg, sendOutgoing]
   );
@@ -761,6 +799,19 @@ export default function WhatsAppClient() {
                       {m.kind === "diagnosis" && m.diag && (
                         <>
                           <DiagnosisBubble d={m.diag} />
+                          {!m.referred ? (
+                            <button
+                              onClick={() => void referToExpert(m)}
+                              className="mt-2 w-full rounded-md py-1.5 text-center text-[12.5px] font-medium active:bg-black/10"
+                              style={{ color: WA.header, background: "rgba(0,0,0,0.045)" }}
+                            >
+                              Expert ko refer karein
+                            </button>
+                          ) : (
+                            <div className="mt-2 text-center text-[11.5px]" style={{ color: WA.tsGray }}>
+                              Expert ko refer kiya gaya
+                            </div>
+                          )}
                           <Stamp m={m} />
                         </>
                       )}
