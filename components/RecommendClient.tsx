@@ -234,8 +234,8 @@ export default function RecommendClient() {
     soil?.source === "shc-manual"
       ? "🇮🇳 Soil Health Card — Govt of India"
       : soil?.source === "soilgrids"
-        ? "🛰 ISRIC SoilGrids"
-        : "📁 District soil defaults";
+        ? "🛰 ISRIC SoilGrids (satellite)"
+        : "📍 Regional estimate (get a Soil Health Card test)";
   const weatherBadge = weather?.source === "open-meteo" ? "🌐 Open-Meteo" : "📁 Cached forecast";
 
   return (

@@ -190,10 +190,17 @@ function buildPrompt(
     : [];
 
   const w = profile.weather;
+  // Honesty: only call it "measured" when SoilGrids/SHC actually returned data.
+  // On the cached path the numbers are regional soil-type averages, and Gemini
+  // must hedge accordingly rather than quoting them as this plot's measurements.
+  const soilHeader =
+    soil.source === "cached"
+      ? "ESTIMATED SOIL (regional soil-type averages — the live satellite grid was unavailable, so treat these as approximate for the district, not measured for this exact plot; phrase 'why' bullets as typical-for-your-soil, and recommend a Soil Health Card test):"
+      : "MEASURED SOIL (ISRIC SoilGrids 250m satellite grid unless marked otherwise):";
   return [
     `FARMER'S PLOT — ${ctx.district}, ${ctx.state} | season: ${ctx.season} | water source: ${ctx.waterSource} | land: ${ctx.landAcres} acres`,
     "",
-    "MEASURED SOIL (ISRIC SoilGrids 250m satellite grid unless marked otherwise):",
+    soilHeader,
     ...soilLines.map((l) => `  ${l}`),
     ...(shcLines.length ? ["", ...shcLines] : []),
     ...(profile.shcNote ? ["", `DISTRICT SOIL HEALTH CARD RECORD: ${profile.shcNote}`] : []),
