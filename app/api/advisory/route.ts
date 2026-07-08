@@ -12,11 +12,13 @@ function fallbackText(lang: string, channel: "ivr" | "sms"): string {
 }
 
 export async function POST(req: NextRequest) {
-  const { query, lang = "hi", channel = "ivr" } = (await req.json()) as {
-    query: string;
-    lang: string;
-    channel: "ivr" | "sms";
-  };
+  let parsed: { query?: string; lang?: string; channel?: "ivr" | "sms" };
+  try {
+    parsed = (await req.json()) as typeof parsed;
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+  const { query = "", lang = "hi", channel = "ivr" } = parsed;
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {

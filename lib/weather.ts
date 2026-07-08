@@ -188,6 +188,39 @@ const HI_CROP: Record<string, string> = {
 
 const hiCrop = (crop: string) => HI_CROP[crop] ?? crop;
 
+// Season of each crop, so an alert does not advise action on a crop that is not
+// in the field (e.g. wheat, a rabi crop, during a July kharif dry spell).
+// "any" = perennial/plantation or year-round vegetables.
+const CROP_SEASON: Record<string, "kharif" | "rabi" | "any"> = {
+  Soybean: "kharif", Cotton: "kharif", Paddy: "kharif", Redgram: "kharif",
+  Maize: "kharif", Groundnut: "kharif", Bajra: "kharif", Moong: "kharif",
+  Chilli: "kharif", Jute: "kharif", Soyabean: "kharif",
+  Wheat: "rabi", Gram: "rabi", Mustard: "rabi", Potato: "rabi",
+  Grapes: "any", Onion: "any", Tomato: "any", Sugarcane: "any", Vegetables: "any",
+  Ragi: "kharif", Blackgram: "kharif", Banana: "any", Coconut: "any", Cumin: "rabi",
+  Orange: "any", Tea: "any", Tobacco: "rabi",
+};
+
+// Kharif ~ Jun-Oct (months 5-9), Rabi ~ Nov-Mar (10,11,0,1,2), else transitional.
+function currentSeason(month: number): "kharif" | "rabi" {
+  return month >= 5 && month <= 9 ? "kharif" : "rabi";
+}
+
+// Pick the district crop that is actually standing this month; fall back to a
+// neutral phrase so the advisory never names an out-of-season crop.
+function seasonalCrop(crops: string[], month: number): string {
+  const season = currentSeason(month);
+  const match = crops.find((c) => {
+    const s = CROP_SEASON[c] ?? "any";
+    return s === season || s === "any";
+  });
+  return match ?? "your standing crop";
+}
+const hiSeasonalCrop = (crops: string[], month: number) => {
+  const c = seasonalCrop(crops, month);
+  return c === "your standing crop" ? "आपकी खड़ी फसल" : hiCrop(c);
+};
+
 // Hindi names for the 32 registry districts (blocks keep exact registry spellings —
 // mixed-script SMS is standard practice and preserves exact region names).
 const HI_DISTRICT: Record<string, string> = {
@@ -269,7 +302,9 @@ export function detectDrySpell(w: DistrictDaily): ZoneAlert | null {
   const windowEnd = dates[Math.min(endIdx, dates.length - 1)];
 
   const blocksHi = district.blocks.slice(0, 2).join(", ");
-  const crop = district.crops[0];
+  const alertMonth = new Date((windowStart ?? dates[0]) + "T00:00:00").getMonth();
+  const crop = seasonalCrop(district.crops, alertMonth);
+  const cropHi = hiSeasonalCrop(district.crops, alertMonth);
 
   // Honest phrasing: only claim past dryness for observed days; forecast dryness
   // is always framed as a prediction.
@@ -294,7 +329,7 @@ export function detectDrySpell(w: DistrictDaily): ZoneAlert | null {
     windowEnd,
     metric: `${runLength} consecutive dry days (<2.5 mm/day, IMD rainy-day threshold) — ${observedDry} observed + ${forecastDry} forecast; past 30-day rainfall ${r1(past30dRain)} mm; next 16-day forecast ${r1(next16dRain)} mm`,
     advisory: `Dry spell over ${district.district} (${district.blocks.slice(0, 3).join(", ")}): ${runLength}-day dry run (${observedDry} observed + ${forecastDry} forecast), only ${r1(next7dRain)} mm rain expected this week. Advise protective irrigation for ${crop.toLowerCase()}, mulching to conserve moisture, and verify borewell/canal availability.`,
-    farmerMessage: `${hiDistrict(district.district)} जिले के ${blocksHi} क्षेत्र में ${spellHi}। ${hiCrop(crop)} की फसल में नमी बचाएं — शाम को हल्की सिंचाई करें, जड़ों के पास घास/पुआल की मल्च बिछाएं। मदद: 1800-180-1551`,
+    farmerMessage: `${hiDistrict(district.district)} जिले के ${blocksHi} क्षेत्र में ${spellHi}। ${cropHi} की फसल में नमी बचाएं — शाम को हल्की सिंचाई करें, जड़ों के पास घास/पुआल की मल्च बिछाएं। मदद: 1800-180-1551`,
     farmersInZone: district.farmers,
     crops: district.crops,
     source: "open-meteo",
@@ -344,7 +379,9 @@ export function detectHeavyRain(w: DistrictDaily): ZoneAlert | null {
 
   const next16dRain = sum(rain, pastDays, rain.length);
   const blocksHi = district.blocks.slice(0, 2).join(", ");
-  const crop = district.crops[0];
+  const alertMonth = new Date((dates[pastDays] ?? dates[0]) + "T00:00:00").getMonth();
+  const crop = seasonalCrop(district.crops, alertMonth);
+  const cropHi = hiSeasonalCrop(district.crops, alertMonth);
 
   return {
     id: alertId("HR", district.district, dates[pastDays] ?? dates[firstIdx]),
@@ -359,7 +396,7 @@ export function detectHeavyRain(w: DistrictDaily): ZoneAlert | null {
     windowEnd: dates[lastIdx],
     metric: `Forecast peak ${r1(peakMm)} mm/24h on ${fmtEn(dates[peakIdx])} — IMD "${imdLabel}"; ${heavyDays} day(s) >=64.5 mm in next 16 days; 16-day total ${r1(next16dRain)} mm`,
     advisory: `Heavy rain over ${district.district} (${district.blocks.slice(0, 3).join(", ")}): peak ${r1(peakMm)} mm on ${fmtEn(dates[peakIdx])}. Advise field drainage channels now, delay fertilizer/pesticide sprays, move harvested ${crop.toLowerCase()} produce to covered storage.`,
-    farmerMessage: `${hiDistrict(district.district)} के ${blocksHi} क्षेत्र में ${fmtHi(dates[peakIdx])} को भारी बारिश (लगभग ${Math.round(peakMm)} मिमी) का अनुमान है। आज ही खेत में जल निकासी की नालियां साफ करें, ${hiCrop(crop)} में जलभराव न होने दें, कटी फसल और खाद सुरक्षित जगह रखें। मदद: 1800-180-1551`,
+    farmerMessage: `${hiDistrict(district.district)} के ${blocksHi} क्षेत्र में ${fmtHi(dates[peakIdx])} को भारी बारिश (लगभग ${Math.round(peakMm)} मिमी) का अनुमान है। आज ही खेत में जल निकासी की नालियां साफ करें, ${cropHi} में जलभराव न होने दें, कटी फसल और खाद सुरक्षित जगह रखें। मदद: 1800-180-1551`,
     farmersInZone: district.farmers,
     crops: district.crops,
     source: "open-meteo",
@@ -431,7 +468,9 @@ export function detectHeatwave(w: DistrictDaily): ZoneAlert | null {
   const windowStart = dates[bestStart];
   const windowEnd = dates[Math.min(bestStart + bestLen - 1, dates.length - 1)];
   const blocksHi = district.blocks.slice(0, 2).join(", ");
-  const crop = district.crops[0];
+  const alertMonth = new Date((dates[pastDays] ?? dates[0]) + "T00:00:00").getMonth();
+  const crop = seasonalCrop(district.crops, alertMonth);
+  const cropHi = hiSeasonalCrop(district.crops, alertMonth);
 
   return {
     id: alertId("HW", district.district, dates[pastDays] ?? windowStart),
@@ -446,7 +485,7 @@ export function detectHeatwave(w: DistrictDaily): ZoneAlert | null {
     windowEnd,
     metric: `Forecast Tmax peaks ${r1(peakC)} degC on ${fmtEn(dates[peakIdx])}; ${bestLen} consecutive days >=40 degC (IMD plains threshold); departure +${r1(departure)} degC vs past-30-day mean ${r1(baseline)} degC`,
     advisory: `Heat stress over ${district.district} (${district.blocks.slice(0, 3).join(", ")}): ${bestLen} days >=40 degC, peaking ${r1(peakC)} degC. Advise early-morning/evening irrigation only, light frequent watering for ${crop.toLowerCase()}, shade nets for nurseries, livestock shade and water.`,
-    farmerMessage: `${hiDistrict(district.district)} के ${blocksHi} क्षेत्र में ${bestLen} दिन तेज गर्मी (${Math.round(peakC)}°C तक) का अनुमान है। ${hiCrop(crop)} में दोपहर की सिंचाई न करें — सुबह या शाम को हल्की सिंचाई करें, नर्सरी पर छाया करें, पशुओं को छांव और पानी दें। मदद: 1800-180-1551`,
+    farmerMessage: `${hiDistrict(district.district)} के ${blocksHi} क्षेत्र में ${bestLen} दिन तेज गर्मी (${Math.round(peakC)}°C तक) का अनुमान है। ${cropHi} में दोपहर की सिंचाई न करें — सुबह या शाम को हल्की सिंचाई करें, नर्सरी पर छाया करें, पशुओं को छांव और पानी दें। मदद: 1800-180-1551`,
     farmersInZone: district.farmers,
     crops: district.crops,
     source: "open-meteo",

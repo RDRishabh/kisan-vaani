@@ -18,8 +18,12 @@ function Spark() {
   );
 }
 
-export default function KpiCards() {
+export default function KpiCards({ liveAlerts }: { liveAlerts?: { total: number; severe: number; warning: number; watch: number } }) {
   const k = OVERVIEW_KPIS;
+  const alertCount = liveAlerts?.total ?? k.activeWeatherAlerts;
+  const alertSub = liveAlerts
+    ? `${liveAlerts.severe} severe · ${liveAlerts.warning} warning · ${liveAlerts.watch} watch`
+    : "1 severe · 2 warning · 1 watch";
   const cards: { label: string; value: string; sub: ReactNode; icon?: ReactNode }[] = [
     {
       label: "Queries today",
@@ -34,8 +38,8 @@ export default function KpiCards() {
     },
     {
       label: "Active weather alerts",
-      value: String(k.activeWeatherAlerts),
-      sub: <span className="text-slate-500">1 severe · 2 warning · 1 watch</span>,
+      value: String(alertCount),
+      sub: <span className="text-slate-500">{alertSub}</span>,
       icon: <CloudSun className="size-4 text-slate-300" aria-hidden="true" />,
     },
     {
@@ -58,7 +62,7 @@ export default function KpiCards() {
     {
       label: "Advisories delivered",
       value: nf.format(k.advisoriesDelivered),
-      sub: <span className="text-slate-500">since pilot start · all channels</span>,
+      sub: <span className="text-slate-500">projected pilot scale · all channels</span>,
       icon: <Radio className="size-4 text-slate-300" aria-hidden="true" />,
     },
     {

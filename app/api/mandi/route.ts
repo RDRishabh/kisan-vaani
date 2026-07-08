@@ -36,6 +36,9 @@ const COMMODITIES: CommodityDef[] = [
   { name: "Maize", commodity: "4", group: "1", fallbackModal: 2140 },
   { name: "Bajra(Pearl Millet/Cumbu)", commodity: "28", group: "1", fallbackModal: 2380 },
   { name: "Bengal Gram(Gram)(Whole)", commodity: "6", group: "2", fallbackModal: 5650 },
+  { name: "Red gram/Arhar/Tur(whole)", commodity: "45", group: "2", fallbackModal: 7100 },
+  { name: "Black Gram(Urd Beans)(Whole)", commodity: "8", group: "2", fallbackModal: 7400 },
+  { name: "Green Gram(Moong)(Whole)", commodity: "9", group: "2", fallbackModal: 8100 },
   { name: "Groundnut", commodity: "10", group: "3", fallbackModal: 6350 },
   { name: "Mustard", commodity: "12", group: "3", fallbackModal: 5420 },
   { name: "Soyabean", commodity: "13", group: "3", fallbackModal: 4720 },
@@ -56,6 +59,9 @@ const ALIASES: [RegExp, string][] = [
   [/wheat|gehu/, "Wheat"],
   [/maize|makka|corn/, "Maize"],
   [/bajra|pearl\s*millet/, "Bajra(Pearl Millet/Cumbu)"],
+  [/red\s*gram|redgram|arhar|tur\b|pigeon\s*pea/, "Red gram/Arhar/Tur(whole)"],
+  [/black\s*gram|blackgram|urad|urd/, "Black Gram(Urd Beans)(Whole)"],
+  [/green\s*gram|greengram|moong(?!fali)/, "Green Gram(Moong)(Whole)"],
   [/gram|chickpea|chana/, "Bengal Gram(Gram)(Whole)"],
   [/groundnut|peanut|moongfali/, "Groundnut"],
   [/mustard|sarson/, "Mustard"],
@@ -240,11 +246,26 @@ export async function GET(req: NextRequest) {
   }
 
   const response: MandiResponse = {
-    rows: rows.slice(0, 15),
+    rows: representativeFirst(rows).slice(0, 15),
     commodity: def.name,
     requestedState,
     generatedAt: new Date().toISOString(),
     source: live ? "agmarknet" : "cached",
   };
   return NextResponse.json(response);
+}
+
+// Consumers (IVR, demo, recommend strip) quote rows[0]. A newest-dated single-lot
+// outlier (min==max==modal from one small market) must not become "the price" —
+// reorder so rows[0] is the median-modal row of the latest arrival date, and
+// degenerate single-quote rows lose to real spreads when alternatives exist.
+function representativeFirst(rows: MandiRow[]): MandiRow[] {
+  if (rows.length <= 1) return rows;
+  const latest = dateKey(rows[0].arrivalDate);
+  let day = rows.filter((r) => dateKey(r.arrivalDate) === latest);
+  const spreads = day.filter((r) => !(r.minPrice === r.maxPrice && r.maxPrice === r.modalPrice));
+  if (spreads.length > 0) day = spreads;
+  const sorted = [...day].sort((a, b) => a.modalPrice - b.modalPrice);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  return [median, ...rows.filter((r) => r !== median)];
 }

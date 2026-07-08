@@ -32,11 +32,17 @@ const SCHEMA = {
 };
 
 export async function POST(req: NextRequest) {
-  const { image, mimeType = "image/jpeg", lang = "hi" } = (await req.json()) as {
-    image: string; // base64, no data: prefix
-    mimeType: string;
-    lang: string;
-  };
+  let parsed: { image?: string; mimeType?: string; lang?: string };
+  try {
+    parsed = (await req.json()) as typeof parsed;
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+  // `|| "image/jpeg"` also covers the empty-string mime an extension-less
+  // file upload produces (data:;base64,…), which Gemini rejects.
+  const image = parsed.image ?? "";
+  const mimeType = parsed.mimeType || "image/jpeg";
+  const lang = parsed.lang || "hi";
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {

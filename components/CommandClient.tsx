@@ -50,6 +50,7 @@ export default function CommandClient() {
   // broadcast log grows as the composer queues sends
   const [broadcasts, setBroadcasts] = useState<LiveBroadcast[]>(BROADCAST_SEED);
   const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null);
+  const [liveAlerts, setLiveAlerts] = useState<{ total: number; severe: number; warning: number; watch: number } | undefined>(undefined);
   const nextBrdId = useRef(1042);
 
   // merge persisted rows on top of the seed data on mount; seed rows stay so
@@ -65,6 +66,21 @@ export default function CommandClient() {
       if (cancelled || live.length === 0) return;
       setBroadcasts((prev) => [...live.filter((b) => !prev.some((p) => p.id === b.id)), ...prev]);
     });
+    // Keep the Overview weather-alert KPI consistent with the live scan the
+    // Weather Alerts tab shows (avoids a 4-vs-13 contradiction on the demo path).
+    void fetch("/api/alerts", { signal: AbortSignal.timeout(12000) })
+      .then((r) => r.json())
+      .then((data: { alerts?: { severity: string }[] }) => {
+        if (cancelled || !Array.isArray(data.alerts)) return;
+        const a = data.alerts;
+        setLiveAlerts({
+          total: a.length,
+          severe: a.filter((x) => x.severity === "severe").length,
+          warning: a.filter((x) => x.severity === "warning").length,
+          watch: a.filter((x) => x.severity === "watch").length,
+        });
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -149,7 +165,7 @@ export default function CommandClient() {
         <main className="space-y-4 p-4 lg:p-6">
           {tab === "overview" && (
             <>
-              <KpiCards />
+              <KpiCards liveAlerts={liveAlerts} />
               <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr_1fr]">
                 <QueryVolumeChart />
                 <LanguageDonut />

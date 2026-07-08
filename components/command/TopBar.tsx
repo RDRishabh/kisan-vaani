@@ -52,6 +52,12 @@ export default function TopBar({ tab, district, onDistrict }: {
       </div>
 
       <div className="ml-auto flex items-center gap-4">
+        <span
+          className="hidden rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 md:inline-flex"
+          title="Weather alerts, escalation tickets and the query feed are live; historical totals and the farmer registry are seeded demonstration data."
+        >
+          Seeded demo data + live rows
+        </span>
         <span className="hidden items-center gap-1.5 text-xs text-slate-500 sm:inline-flex">
           <CircleDot className="size-3 text-emerald-500" aria-hidden="true" />
           Live

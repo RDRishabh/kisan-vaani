@@ -2,7 +2,7 @@
 // Signature validation is skipped when TWILIO_AUTH_TOKEN is unset so local dev
 // and preview deploys keep working without Twilio credentials.
 
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
@@ -33,7 +33,9 @@ export function validateTwilioSignature(
       .join("");
 
   const expected = createHmac("sha1", authToken).update(data, "utf8").digest("base64");
-  return expected === signature;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 // Collect string form fields into the shape signature validation expects.

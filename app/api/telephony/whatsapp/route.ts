@@ -28,6 +28,8 @@ type DiagnoseResult = {
   treatment_organic: string[];
   treatment_chemical: string[];
   urgency: string;
+  voice_summary?: string;
+  source?: string;
 };
 
 async function fetchMediaBase64(url: string): Promise<{ data: string; mimeType: string }> {
@@ -61,6 +63,12 @@ async function diagnosePhoto(req: NextRequest, mediaUrl: string): Promise<string
   if (!res.ok) throw new Error(`diagnose HTTP ${res.status}`);
   const d = (await res.json()) as DiagnoseResult;
 
+  // A cached fallback is a canned example, not an analysis of THIS photo.
+  // Never present it as a per-photo diagnosis on a real outbound channel.
+  if (d.source !== "gemini") {
+    return "किसानवाणी: फोटो का विश्लेषण अभी नहीं हो सका। कृपया कुछ देर बाद साफ़ फोटो दोबारा भेजें, या समस्या लिखकर भेजें। मदद: 1800-180-1551";
+  }
+
   if (!d.is_plant) {
     return "किसानवाणी: यह फोटो फसल या पत्ती की नहीं लग रही। कृपया प्रभावित पौधे की साफ़ फोटो भेजें।";
   }
@@ -70,10 +78,15 @@ async function diagnosePhoto(req: NextRequest, mediaUrl: string): Promise<string
     `किसानवाणी निदान — ${d.plant}`,
     `रोग: ${d.disease_local} (${d.disease_en}) — भरोसा ${d.confidence}%, स्तर: ${severityHi}`,
   ];
-  if (d.treatment_organic[0]) lines.push(`जैविक उपाय: ${d.treatment_organic[0]}`);
-  if (d.treatment_chemical[0]) lines.push(`रासायनिक उपाय: ${d.treatment_chemical[0]}`);
-  if (d.urgency) lines.push(d.urgency);
-  lines.push("मदद: 1800-180-1551");
+  // voice_summary is the fully localized farmer-facing advisory (the raw
+  // treatment_* fields come back in English); use it for the actionable part.
+  if (d.voice_summary) {
+    lines.push(d.voice_summary);
+  } else {
+    if (d.treatment_organic[0]) lines.push(`जैविक उपाय: ${d.treatment_organic[0]}`);
+    if (d.treatment_chemical[0]) lines.push(`रासायनिक उपाय: ${d.treatment_chemical[0]}`);
+  }
+  lines.push("छिड़काव से पहले लेबल पढ़ें और KVK से पुष्टि करें। मदद: 1800-180-1551");
   return lines.join("\n");
 }
 

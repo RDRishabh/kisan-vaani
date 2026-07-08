@@ -22,7 +22,7 @@ const CHANNELS = [
   {
     icon: Phone,
     title: "Voice calls",
-    body: "A farmer dials a toll-free number and speaks in their own language. The AI understands the query and answers on the same call. No literacy, internet connection, or app required.",
+    body: "A farmer dials a simple phone number (a toll-free 1800 line via Exotel in production) and speaks in their own language. The AI understands the query and answers on the same call. No literacy, internet connection, or app required.",
   },
   {
     icon: MessageSquare,

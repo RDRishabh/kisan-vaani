@@ -44,4 +44,5 @@ export const DISTRICTS: District[] = [
   { state: "Jharkhand", district: "Ranchi", lat: 23.34, lon: 85.31, farmers: 6540, crops: ["Paddy", "Vegetables", "Maize"], blocks: ["Ranchi", "Bundu", "Khunti"] },
   { state: "Chhattisgarh", district: "Raipur", lat: 21.25, lon: 81.63, farmers: 9870, crops: ["Paddy", "Gram", "Vegetables"], blocks: ["Raipur", "Arang", "Abhanpur"] },
   { state: "Assam", district: "Dibrugarh", lat: 27.47, lon: 94.91, farmers: 5980, crops: ["Tea", "Paddy", "Mustard"], blocks: ["Dibrugarh East", "Chabua", "Naharkatia"] },
+  { state: "Andhra Pradesh", district: "West Godavari", lat: 16.71, lon: 81.1, farmers: 12960, crops: ["Paddy", "Redgram", "Maize"], blocks: ["Bhimavaram", "Tadepalligudem", "Tanuku"] },
 ];

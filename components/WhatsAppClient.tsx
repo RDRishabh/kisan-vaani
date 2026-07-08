@@ -88,7 +88,7 @@ const CACHED_DIAG: Diagnosis = {
     "पीले चिपचिपे ट्रैप 8-10 प्रति एकड़ (सफेद मक्खी नियंत्रण)",
     "संक्रमित पौधे उखाड़कर जला दें",
   ],
-  treatment_chemical: ["इमिडाक्लोप्रिड 17.8 SL — 0.3ml/L, केवल गंभीर प्रकोप पर"],
+  treatment_chemical: ["डायफेनथ्यूरॉन 50 WP — 1g/L, केवल गंभीर प्रकोप पर; दवा बदल-बदल कर छिड़कें"],
   prevention: ["रोग-रोधी किस्म लगाएँ", "नर्सरी को नेट से ढकें"],
   urgency: "3 दिन के भीतर छिड़काव करें — सफेद मक्खी वायरस तेज़ी से फैलाती है।",
   voice_summary:
@@ -688,7 +688,7 @@ export default function WhatsAppClient() {
               Live demo
             </Link>
             <Link href="/command" className="text-ink-soft hover:text-forest">
-              Command centre
+              Command center
             </Link>
           </div>
         </div>
@@ -938,11 +938,11 @@ export default function WhatsAppClient() {
               </p>
             </div>
 
-            {/* 2 · live wa.me deep link */}
+            {/* 2 · live WhatsApp sandbox link */}
             <div className="rounded-2xl bg-white border border-forest/15 p-5">
-              <div className="text-xs font-semibold text-ink-soft mb-3">2. Live WhatsApp deep link</div>
+              <div className="text-xs font-semibold text-ink-soft mb-3">2. Connect on the live WhatsApp sandbox</div>
               <a
-                href="https://wa.me/?text=Namaste%20KisanVaani"
+                href="https://wa.me/14155238886?text=join%20crop-advisory"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 rounded-xl px-5 py-3 text-white font-semibold shadow hover:opacity-90 transition"
@@ -951,12 +951,13 @@ export default function WhatsAppClient() {
                 <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" aria-hidden>
                   <path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5.1-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.4-.7-2.9-1.2-4.7-4.1-4.9-4.3-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4l.9 2.1c.1.2.1.4 0 .6l-.4.6-.5.5c-.2.2-.3.4-.1.7.2.3.9 1.4 1.9 2.3 1.3 1.1 2.3 1.5 2.7 1.6.3.2.5.1.7-.1l.9-1c.2-.3.5-.2.8-.1l2 1c.3.1.5.2.6.4 0 .1 0 .7-.1 1.3z" />
                 </svg>
-                Open in real WhatsApp
+                Message the KisanVaani sandbox
                 <ExternalLink className="w-4 h-4 opacity-80" />
               </a>
               <p className="text-xs text-ink-soft mt-3">
-                The <code className="bg-paper-warm px-1 rounded">wa.me</code> click-to-chat link opens WhatsApp with a
-                prefilled message. No signup is required, and it works on any phone or desktop.
+                Opens WhatsApp to the Twilio sandbox number with the join code prefilled. Send the message once to
+                connect your phone, then send a crop photo or voice note to reach the live pipeline. Requires the sandbox
+                to be enabled in the project&rsquo;s Twilio console.
               </p>
             </div>
 

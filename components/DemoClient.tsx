@@ -854,6 +854,9 @@ export default function DemoClient() {
                         <ul className="text-sm space-y-1.5">
                           {diag.treatment_chemical.map((x, i) => <li key={i}>• {x}</li>)}
                         </ul>
+                        <p className="mt-2 text-[11px] text-clay/80">
+                          Confirm with your KVK and read the product label before spraying — dosages are indicative.
+                        </p>
                       </div>
                     </div>
 
@@ -904,7 +907,7 @@ export default function DemoClient() {
               <div className="text-xs font-semibold tracking-widest text-leaf-mist/80 mb-3 uppercase">How this works in production</div>
               {mode === "call" && (
                 <ol className="space-y-2.5 text-sm">
-                  <li><b>1 · Toll-free IVR</b> — the farmer dials 1800-180-KISAN; Exotel/Twilio Voice answers. No cost to the farmer.</li>
+                  <li><b>1 · Toll-free IVR</b> — the farmer dials a toll-free 1800 line (provisioned via Exotel in production; a live Twilio number answers today). No cost to the farmer.</li>
                   <li><b>2 · Speech to text</b> — {lang === "auto" ? <>Gemini ingests the raw audio, detects the language and transcribes it; no language menu is needed <span className="text-leaf-mist/70">(the demo just did this with your microphone)</span></> : <>Bhashini / Google Cloud Speech ASR in 12+ Indic languages <span className="text-leaf-mist/70">(the demo uses your browser&rsquo;s microphone and speech engine)</span></>}.</li>
                   <li><b>3 · Gemini reasons</b> — grounded on the Kisan Call Centre Q&amp;A corpus, crop calendar and weather, with guardrailed dosages.</li>
                   <li><b>4 · Text to speech</b> — the advisory is spoken back in the farmer&rsquo;s language on the same call.</li>
@@ -916,7 +919,7 @@ export default function DemoClient() {
                   <li><b>1 · SMS to shortcode 56070</b> — works on 2G on any handset at ₹0.15 per message. Shorthand such as <span className="font-mono">KAPAS PILA PATTA</span> is understood.</li>
                   <li><b>2 · Gemini expands and reasons</b> — reads transliterated Hindi/Marathi/Telugu shorthand and returns the advisory in native script.</li>
                   <li><b>3 · Reply within two SMS segments</b> — exact dosages plus the Kisan Call Centre number, readable on a monochrome screen.</li>
-                  <li><b>4 · Logged to Kisan Alert</b> — anonymised and geotagged by cell tower for outbreak mapping. <Link href="/command" className="underline text-turmeric-soft">View the command center</Link></li>
+                  <li><b>4 · Logged to Kisan Alert</b> — aggregated to block level by registered village for outbreak mapping; individual identity is not shown on the public map. <Link href="/command" className="underline text-turmeric-soft">View the command center</Link></li>
                 </ol>
               )}
               {mode === "photo" && (
@@ -940,7 +943,7 @@ export default function DemoClient() {
               live Twilio number: <span className="font-medium text-ink whitespace-nowrap">+1 254 272 6372</span>. Call it
               and describe a crop problem after the menu, or text shorthand such as{" "}
               <span className="font-mono text-xs">KAPAS PILA PATTA</span> — the reply comes from the same Gemini advisory
-              engine, and the query appears in the command centre. It is a US trial number (a short Twilio notice plays
+              engine, and the query appears in the command center. It is a US trial number (a short Twilio notice plays
               first, and international rates apply from India); the production deployment uses an Indian toll-free line
               via Exotel with DLT-registered SMS.
             </div>
