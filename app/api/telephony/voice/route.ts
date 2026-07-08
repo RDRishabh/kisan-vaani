@@ -6,6 +6,7 @@ import type { NextRequest } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { generateContentResilient } from "@/lib/genai";
 import { FALLBACK_ADVISORY } from "@/lib/data";
+import { logQuery } from "@/lib/db";
 import type { MandiResponse } from "@/lib/types";
 import {
   escapeXml,
