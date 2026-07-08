@@ -4,6 +4,7 @@
 // Hindi fallback so the number always answers.
 
 import type { NextRequest } from "next/server";
+import { logQuery } from "@/lib/db";
 import {
   escapeXml,
   forbiddenTwiml,
@@ -25,5 +26,6 @@ export async function POST(req: NextRequest) {
   }
 
   const reply = await textAdvisory(body);
+  logQuery({ channel: "sms", lang: "hi", query: body, responseSource: "telephony-live" });
   return twiml(`<Message>${escapeXml(reply)}</Message>`);
 }

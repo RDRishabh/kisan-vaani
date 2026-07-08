@@ -370,6 +370,26 @@ export type QueryLogEntry = {
   district?: string;
 };
 
+export type LoggedQuery = QueryLogEntry & { id: number; createdAt: string };
+
+export async function listQueries(limit = 30): Promise<LoggedQuery[]> {
+  const sql = getDb();
+  if (!sql) return [];
+  await ensureSchema();
+  const rows = (await sql`
+    SELECT id, created_at, channel, lang, query, response_source, district
+    FROM kv_queries ORDER BY created_at DESC LIMIT ${limit}`) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    id: Number(r.id),
+    createdAt: String(r.created_at),
+    channel: r.channel as QueryLogEntry["channel"],
+    lang: (r.lang as string) ?? undefined,
+    query: String(r.query),
+    responseSource: String(r.response_source),
+    district: (r.district as string) ?? undefined,
+  }));
+}
+
 export function logQuery(entry: QueryLogEntry): void {
   try {
     const sql = getDb();

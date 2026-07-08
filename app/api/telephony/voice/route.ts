@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
     // If the caller already spoke their problem at the menu, answer it directly.
     if (speech.length > 8) {
       const reply = await generateAnswer(speech);
+      logQuery({ channel: "call", lang: "hi", query: speech, responseSource: "telephony-live" });
       return twiml(
         say(reply) +
           gather("/api/telephony/voice?step=menu", say(ANOTHER_QUESTION)) +
@@ -128,6 +129,7 @@ export async function POST(req: NextRequest) {
       );
     }
     const reply = await generateAnswer(speech);
+    logQuery({ channel: "call", lang: "hi", query: speech, responseSource: "telephony-live" });
     return twiml(
       say(reply) +
         gather("/api/telephony/voice?step=menu", say(ANOTHER_QUESTION)) +

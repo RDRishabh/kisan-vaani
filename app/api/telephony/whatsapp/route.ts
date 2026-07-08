@@ -4,6 +4,7 @@
 // Text message: same advisory path as SMS. Replies are plain text — no markdown.
 
 import type { NextRequest } from "next/server";
+import { logQuery } from "@/lib/db";
 import {
   escapeXml,
   forbiddenTwiml,
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
   if (numMedia > 0 && params.MediaUrl0) {
     try {
       reply = await diagnosePhoto(req, params.MediaUrl0);
+      logQuery({ channel: "photo", lang: "hi", query: "whatsapp photo diagnosis", responseSource: "telephony-live" });
     } catch (err) {
       console.error("telephony whatsapp diagnose error:", err instanceof Error ? err.message : err);
       reply =
@@ -94,6 +96,7 @@ export async function POST(req: NextRequest) {
     }
   } else if (body) {
     reply = await textAdvisory(body);
+    logQuery({ channel: "sms", lang: "hi", query: body, responseSource: "telephony-live" });
   } else {
     reply =
       "किसानवाणी में आपका स्वागत है। फसल की समस्या लिखकर भेजें, या प्रभावित पौधे की फोटो भेजें।";
