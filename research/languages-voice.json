@@ -1,107 +1,107 @@
 {
- "verdict": "All-India voice support is fully demo-able TODAY on Gemini 2.5 Flash alone, and I verified it live with the key already in /Users/krishgoyal/Claude/kisan-vaani/.env.local: a single generateContent call with inline base64 audio (both audio/wav AND audio/webm — webm is undocumented but works, which matters because browser MediaRecorder produces webm/opus) correctly auto-detected spoken Hindi (hi-IN) and Telugu (te), returned perfect transcripts, and replied in the same language as strict JSON. Gemini's native TTS (gemini-2.5-flash-preview-tts) also verified working — returns 24kHz PCM audio — so the demo can SPEAK replies in any language without depending on browser voices, which is critical because my empirical speechSynthesis.getVoices() check on this machine found only 6 Indic voices (hi/bn/ta/te/kn/en-IN, all macOS system voices; no mr/gu/ml/pa/ur/or). Bhashini is the credible government production story — its GitBook docs list a single ASR service covering all 22 scheduled languages and self-serve same-day API key generation — but its inference endpoint returns 403 without a key (verified live), so cite it in the deck and production architecture, don't demo it today.",
- "demo_plan": "Everything runs on the Gemini API key already present in kisan-vaani/.env.local — zero new signups. (1) VOICE IN: browser MediaRecorder with mimeType 'audio/webm;codecs=opus' → base64 → Next.js route handler → POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent with header x-goog-api-key and body {contents:[{parts:[{text:\"<instruction demanding strict JSON {language_bcp47, language_name, transcript, reply_in_same_language}>\"},{inline_data:{mime_type:\"audio/webm\",data:\"<b64>\"}}]}],generationConfig:{responseMimeType:\"application/json\"}}. Verified today end-to-end for Hindi and Telugu — exact transcripts, correct BCP-47 tags, fluent same-language agronomy replies. Response path: candidates[0].content.parts[0].text (JSON string), usageMetadata.promptTokensDetails shows modality AUDIO (~32 tokens/sec of audio, so a 30s clip is ~960 tokens — cheap). (2) VOICE OUT: POST .../models/gemini-2.5-flash-preview-tts:generateContent with {contents:[{parts:[{text:\"<reply>\"}]}],generationConfig:{responseModalities:[\"AUDIO\"],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:\"Kore\"}}}}} — verified today, returns candidates[0].content.parts[0].inlineData with mimeType \"audio/L16;codec=pcm;rate=24000\" (raw 16-bit PCM base64); prepend a 44-byte WAV header server-side or play via Web Audio API decodeAudioData on an AudioBuffer. Use browser speechSynthesis only as an optimistic fast-path when a matching voice exists (my live getVoices() check: hi-IN/bn-IN/ta-IN/te-IN/kn-IN present on macOS Chrome; Windows Chrome typically only has Google हिन्दी; never assume mr/gu/ml/pa/ur). (3) CONSTRAINTS: keep recordings under ~60s (inline limit is 20MB total request per docs, but Vercel serverless body limit ~4.5MB is the real ceiling — 60s of opus ≈ 500KB, fine; base64 adds 33%). Documented audio formats: wav/mp3/aiff/aac/ogg/flac (+webm verified working); max 9.5 hours audio per prompt. (4) UI: 22-language picker seeded from embed_data; demo script line: \"speak in ANY of India's 22 scheduled languages — no language button needed, it detects automatically\" (safe claim for the major languages; Gemini handled both test languages flawlessly, though low-resource ones like Santali/Bodo are untested — demo with hi/te/ta/bn/mr for safety).",
- "production_plan": "Production stack leads with Bhashini (MeitY Digital India — maximum govt credibility for a Google hackathon India story). Registration is self-serve: register at https://bhashini.gov.in/ulca/user/register# → email verification (check spam) → login → My Profile (https://bhashini.gov.in/ulca/profile) → Generate API key (max 5 keys per integrator, app name lowercase+underscores). No manual approval step is documented, so same-day access is realistic — but I could not complete it in-session (account creation is prohibited for me), so do not bet the demo on it. Call flow (from official GitBook): STEP 1 pipeline config — POST https://meity-auth.ulcacontrib.org/ulca/apis/v0/model/getModelsPipeline with headers userID + ulcaApiKey and body listing pipelineTasks (asr/translation/tts) + pipelineId; response returns serviceIds and a per-pipeline inference API key. STEP 2 compute — POST https://dhruva-api.bhashini.gov.in/services/inference/pipeline with the returned Authorization header and pipelineTasks config {language:{sourceLanguage:\"hi\"},serviceId:\"...\",audioFormat,samplingRate} + inputData.audio[0].audioContent (base64). I probed both endpoints live: dhruva returns 403 {\"detail\":\"Not authenticated\"} (host live, auth enforced), meity-auth returns 500 on empty body (live). Language coverage (from official docs at dibd-bhashini.gitbook.io/bhashini-apis/available-models-for-usage): ASR serviceId \"bhashini/ai4bharat/conformer-multilingual-asr\" covers ALL 22 scheduled languages; TTS \"Bhashini/IITM/TTS\" covers ~22 incl. Bodo/Manipuri/Santali/Kashmiri; translation via \"ai4bharat/indictrans-v2-all-gpu--t4\" / \"bhashini/ai4bharat/indictrans-v3\" covers all 22. Architecture: Gemini 2.5 Flash does open-set spoken-language ID (Bhashini ASR requires sourceLanguage upfront), then routes to the Bhashini per-language ASR/TTS pipeline; commercial fallback = Google Cloud Speech-to-Text v2 (verified Indic locales: as-IN, bn-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, or-IN, pa-Guru-IN, sd-IN, ta-IN, te-IN, en-IN; NO ur-IN — only ur-PK; missing ks/doi/mai/kok/mni/sa/sat/brx) + Cloud Text-to-Speech (verified voices: bn/gu/hi/kn/ml/mr/pa/ta/te/ur/en all -IN; no or-IN/as-IN). Deck line: \"Bhashini for sovereign all-22-language coverage, Google Cloud for enterprise SLA, Gemini for language auto-detection and reasoning.\"",
- "embed_data": "[{\"code\":\"as\",\"name_en\":\"Assamese\",\"name_native\":\"অসমীয়া\",\"bcp47\":\"as-IN\",\"likely_browser_tts\":false},{\"code\":\"bn\",\"name_en\":\"Bengali\",\"name_native\":\"বাংলা\",\"bcp47\":\"bn-IN\",\"likely_browser_tts\":true},{\"code\":\"brx\",\"name_en\":\"Bodo\",\"name_native\":\"बड़ो\",\"bcp47\":\"brx-IN\",\"likely_browser_tts\":false},{\"code\":\"doi\",\"name_en\":\"Dogri\",\"name_native\":\"डोगरी\",\"bcp47\":\"doi-IN\",\"likely_browser_tts\":false},{\"code\":\"gu\",\"name_en\":\"Gujarati\",\"name_native\":\"ગુજરાતી\",\"bcp47\":\"gu-IN\",\"likely_browser_tts\":true},{\"code\":\"hi\",\"name_en\":\"Hindi\",\"name_native\":\"हिन्दी\",\"bcp47\":\"hi-IN\",\"likely_browser_tts\":true},{\"code\":\"kn\",\"name_en\":\"Kannada\",\"name_native\":\"ಕನ್ನಡ\",\"bcp47\":\"kn-IN\",\"likely_browser_tts\":true},{\"code\":\"ks\",\"name_en\":\"Kashmiri\",\"name_native\":\"کٲشُر\",\"bcp47\":\"ks-IN\",\"likely_browser_tts\":false},{\"code\":\"kok\",\"name_en\":\"Konkani\",\"name_native\":\"कोंकणी\",\"bcp47\":\"kok-IN\",\"likely_browser_tts\":false},{\"code\":\"mai\",\"name_en\":\"Maithili\",\"name_native\":\"मैथिली\",\"bcp47\":\"mai-IN\",\"likely_browser_tts\":false},{\"code\":\"ml\",\"name_en\":\"Malayalam\",\"name_native\":\"മലയാളം\",\"bcp47\":\"ml-IN\",\"likely_browser_tts\":true},{\"code\":\"mni\",\"name_en\":\"Manipuri (Meitei)\",\"name_native\":\"ꯃꯤꯇꯩꯂꯣꯟ\",\"bcp47\":\"mni-IN\",\"likely_browser_tts\":false},{\"code\":\"mr\",\"name_en\":\"Marathi\",\"name_native\":\"मराठी\",\"bcp47\":\"mr-IN\",\"likely_browser_tts\":true},{\"code\":\"ne\",\"name_en\":\"Nepali\",\"name_native\":\"नेपाली\",\"bcp47\":\"ne-IN\",\"likely_browser_tts\":false},{\"code\":\"or\",\"name_en\":\"Odia\",\"name_native\":\"ଓଡ଼ିଆ\",\"bcp47\":\"or-IN\",\"likely_browser_tts\":false},{\"code\":\"pa\",\"name_en\":\"Punjabi\",\"name_native\":\"ਪੰਜਾਬੀ\",\"bcp47\":\"pa-IN\",\"likely_browser_tts\":true},{\"code\":\"sa\",\"name_en\":\"Sanskrit\",\"name_native\":\"संस्कृतम्\",\"bcp47\":\"sa-IN\",\"likely_browser_tts\":false},{\"code\":\"sat\",\"name_en\":\"Santali\",\"name_native\":\"ᱥᱟᱱᱛᱟᱲᱤ\",\"bcp47\":\"sat-IN\",\"likely_browser_tts\":false},{\"code\":\"sd\",\"name_en\":\"Sindhi\",\"name_native\":\"سنڌي\",\"bcp47\":\"sd-IN\",\"likely_browser_tts\":false},{\"code\":\"ta\",\"name_en\":\"Tamil\",\"name_native\":\"தமிழ்\",\"bcp47\":\"ta-IN\",\"likely_browser_tts\":true},{\"code\":\"te\",\"name_en\":\"Telugu\",\"name_native\":\"తెలుగు\",\"bcp47\":\"te-IN\",\"likely_browser_tts\":true},{\"code\":\"ur\",\"name_en\":\"Urdu\",\"name_native\":\"اردو\",\"bcp47\":\"ur-IN\",\"likely_browser_tts\":true}]",
- "findings": [
-  {
-   "source_name": "Gemini 2.5 Flash — inline audio understanding (ASR + language ID + same-language reply)",
-   "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-   "access": "api-key",
-   "verified": true,
-   "verification_note": "Live POST with x-goog-api-key (key from kisan-vaani/.env.local). Hindi WAV (audio/wav) AND Hindi+Telugu WebM/Opus (audio/webm) all returned 200. Response: candidates[0].content.parts[0].text contained exact JSON {language_bcp47:'hi-IN'/'te', transcript:'मेरी गेहूं की फसल में पीले धब्बे आ गए हैं...', reply_in_same_language:'यह पीला रस्ट रोग या नाइट्रोजन की कमी...'} — word-perfect transcripts. usageMetadata.promptTokensDetails: [{modality:'TEXT'},{modality:'AUDIO',tokenCount:144}]; modelVersion:'gemini-2.5-flash'. audio/webm works despite not being in the docs' format list.",
-   "use": "demo",
-   "notes": "Request shape: contents[0].parts = [{text:prompt},{inline_data:{mime_type,data:base64}}]; generationConfig.responseMimeType:'application/json' for strict JSON. This one call replaces separate ASR + langID + LLM."
-  },
-  {
-   "source_name": "Gemini 2.5 Flash Preview TTS — spoken replies in Indic languages",
-   "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent",
-   "access": "api-key",
-   "verified": true,
-   "verification_note": "Live POST with Hindi text + generationConfig {responseModalities:['AUDIO'],speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName:'Kore'} returned 200 with candidates[0].content.parts[0].inlineData {mimeType:'audio/L16;codec=pcm;rate=24000', data: 249KB base64 PCM}.",
-   "use": "demo",
-   "notes": "Raw 16-bit PCM 24kHz — wrap in 44-byte WAV header server-side or play via Web Audio API. Removes dependence on patchy browser voices for reply speech."
-  },
-  {
-   "source_name": "Gemini API audio docs (formats & limits)",
-   "url": "https://ai.google.dev/gemini-api/docs/audio",
-   "access": "open",
-   "verified": true,
-   "verification_note": "Fetched. Documented input MIME types: audio/wav, audio/mp3, audio/aiff, audio/aac, audio/ogg, audio/flac (webm absent from docs but proven working above). Limits: max 9.5 hours audio per prompt; inline request max 20MB total; audio downsampled to 16kbps mono; 32 tokens/sec of audio. Fields: inline_data{mime_type,data} inline, file_data{file_uri,mime_type} via Files API.",
-   "use": "deck-citation",
-   "notes": "Code samples on the page now show gemini-3.5-flash, but 2.5-flash audio verified live above."
-  },
-  {
-   "source_name": "Bhashini ULCA onboarding (official GitBook)",
-   "url": "https://bhashini.gitbook.io/bhashini-apis/pre-requisites-and-onboarding",
-   "access": "registration",
-   "verified": true,
-   "verification_note": "Fetched. Steps: register at https://bhashini.gov.in/ulca/user/register# → email auth (check spam) → login https://bhashini.gov.in/ulca/user/login → My Profile https://bhashini.gov.in/ulca/profile → 'Generate' API key (max 5 keys; app name lowercase+underscores); userID also taken from My Profile. No manual-approval step documented → same-day access realistic but not guaranteed.",
-   "use": "production",
-   "notes": "I cannot create the account (account creation prohibited for agents); user must register themselves — ~10 min self-serve."
-  },
-  {
-   "source_name": "Bhashini pipeline config endpoint (MeitY ULCA)",
-   "url": "https://meity-auth.ulcacontrib.org/ulca/apis/v0/model/getModelsPipeline",
-   "access": "api-key",
-   "verified": false,
-   "verification_note": "Live POST with empty body returned HTTP 500 (host live, needs userID + ulcaApiKey headers and pipelineTasks body). Could not get real data without a registered account.",
-   "use": "production",
-   "notes": "Returns serviceIds + the Authorization value for the compute call."
-  },
-  {
-   "source_name": "Bhashini Dhruva inference endpoint (ASR/NMT/TTS compute)",
-   "url": "https://dhruva-api.bhashini.gov.in/services/inference/pipeline",
-   "access": "api-key",
-   "verified": false,
-   "verification_note": "Live POST returned HTTP 403 {\"detail\":\"Not authenticated\"} — endpoint exists and is live, auth enforced. No key available this session.",
-   "use": "production",
-   "notes": "Body: pipelineTasks[{taskType:'asr',config:{language:{sourceLanguage},serviceId,audioFormat,samplingRate}}] + inputData.audio[0].audioContent (base64). taskTypes chainable: asr → translation → tts."
-  },
-  {
-   "source_name": "Bhashini available models / language coverage (official GitBook)",
-   "url": "https://dibd-bhashini.gitbook.io/bhashini-apis/available-models-for-usage",
-   "access": "open",
-   "verified": true,
-   "verification_note": "Fetched. ASR serviceId 'bhashini/ai4bharat/conformer-multilingual-asr' lists all 22 scheduled languages (Assamese…Urdu incl. Bodo, Dogri, Kashmiri, Konkani, Maithili, Manipuri, Santali, Sindhi, Sanskrit). TTS 'Bhashini/IITM/TTS' lists ~24 langs incl. Bodo/Manipuri/Santali/Kashmiri/Sindhi. Translation 'ai4bharat/indictrans-v2-all-gpu--t4' + 'bhashini/ai4bharat/indictrans-v3' cover all 22.",
-   "use": "deck-citation",
-   "notes": "This is the 'all 22 scheduled languages' citation for the deck — government (MeitY/Digital India) + AI4Bharat provenance."
-  },
-  {
-   "source_name": "Google Cloud Speech-to-Text v2 — Indic language coverage",
-   "url": "https://cloud.google.com/speech-to-text/v2/docs/speech-to-text-supported-languages",
-   "access": "api-key",
-   "verified": true,
-   "verification_note": "curl'd the docs page and extracted exact locale codes: as-IN, bn-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, or-IN, pa-Guru-IN, sd-IN, ta-IN, te-IN, en-IN (also ne-NP, ur-PK, bn-BD, si-LK). 13 India locales = 12 scheduled languages + Indian English. NOT covered: ur-IN, ks, doi, mai, kok, mni, brx, sa, sat.",
-   "use": "production",
-   "notes": "Commercial fallback for production SLA; needs GCP project + billing, not same-day-demo material."
-  },
-  {
-   "source_name": "Google Cloud Text-to-Speech — Indic voices",
-   "url": "https://cloud.google.com/text-to-speech/docs/voices",
-   "access": "api-key",
-   "verified": true,
-   "verification_note": "curl'd the voices page: -IN voices exist for bn, en, gu, hi, kn, ml, mr, pa, ta, te, ur (11 locales, 10 scheduled languages). No or-IN, as-IN, or other scheduled languages.",
-   "use": "production",
-   "notes": "Also the best available proxy for which languages Google TTS voices exist on Android."
-  },
-  {
-   "source_name": "Browser speechSynthesis Indic voices — empirical check (Chromium on macOS)",
-   "url": "http://localhost:3199/voices.html",
-   "access": "open",
-   "verified": true,
-   "verification_note": "Ran speechSynthesis.getVoices() in a live Chromium session: 180 voices total; Indic = Lekha|hi-IN, Piya|bn-IN, Vani|ta-IN, Geeta|te-IN, Soumya|kn-IN, Rishi|en-IN — ALL localService (macOS system voices). Zero voices for mr, gu, ml, pa, ur, or, as, ne or any other scheduled language.",
-   "use": "rejected",
-   "notes": "Coverage matrix: macOS Chrome = hi/bn/ta/te/kn only; Windows Chrome desktop typically only 'Google हिन्दी' (network); Chrome Android delegates to Google Speech Services (expected hi/bn/ta/te/mr/gu/kn/ml/ur — unverified, and user must have voice data installed). Verdict: too patchy to demo on — use as optional fast-path only, Gemini TTS as the real path."
-  },
-  {
-   "source_name": "Bhashini on APISetu directory (extra govt citation)",
-   "url": "https://directory.apisetu.gov.in/api-collection/bhashini",
-   "access": "registration",
-   "verified": false,
-   "verification_note": "Found via search, not fetched — listed as 'Bhashini - Digital India Corporation - APIs' on the official India APISetu directory.",
-   "use": "deck-citation",
-   "notes": "Secondary credibility citation showing Bhashini is a listed national API."
-  }
- ]
+    "verdict": "All-India voice support is fully demo-able TODAY on Gemini 2.5 Flash alone, and I verified it live with the key already with a single generateContent call with inline base64 audio (both audio/wav AND audio/webm — webm is undocumented but works, which matters because browser MediaRecorder produces webm/opus) correctly auto-detected spoken Hindi (hi-IN) and Telugu (te), returned perfect transcripts, and replied in the same language as strict JSON. Gemini's native TTS (gemini-2.5-flash-preview-tts) also verified working — returns 24kHz PCM audio — so the demo can SPEAK replies in any language without depending on browser voices, which is critical because my empirical speechSynthesis.getVoices() check on this machine found only 6 Indic voices (hi/bn/ta/te/kn/en-IN, all macOS system voices; no mr/gu/ml/pa/ur/or). Bhashini is the credible government production story — its GitBook docs list a single ASR service covering all 22 scheduled languages and self-serve same-day API key generation — but its inference endpoint returns 403 without a key (verified live), so cite it in the deck and production architecture, don't demo it today.",
+    "demo_plan": "Everything runs on the Gemini API key already present in kisan-vaani/.env.local — zero new signups. (1) VOICE IN: browser MediaRecorder with mimeType 'audio/webm;codecs=opus' → base64 → Next.js route handler → POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent with header x-goog-api-key and body {contents:[{parts:[{text:\"<instruction demanding strict JSON {language_bcp47, language_name, transcript, reply_in_same_language}>\"},{inline_data:{mime_type:\"audio/webm\",data:\"<b64>\"}}]}],generationConfig:{responseMimeType:\"application/json\"}}. Verified today end-to-end for Hindi and Telugu — exact transcripts, correct BCP-47 tags, fluent same-language agronomy replies. Response path: candidates[0].content.parts[0].text (JSON string), usageMetadata.promptTokensDetails shows modality AUDIO (~32 tokens/sec of audio, so a 30s clip is ~960 tokens — cheap). (2) VOICE OUT: POST .../models/gemini-2.5-flash-preview-tts:generateContent with {contents:[{parts:[{text:\"<reply>\"}]}],generationConfig:{responseModalities:[\"AUDIO\"],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:\"Kore\"}}}}} — verified today, returns candidates[0].content.parts[0].inlineData with mimeType \"audio/L16;codec=pcm;rate=24000\" (raw 16-bit PCM base64); prepend a 44-byte WAV header server-side or play via Web Audio API decodeAudioData on an AudioBuffer. Use browser speechSynthesis only as an optimistic fast-path when a matching voice exists (my live getVoices() check: hi-IN/bn-IN/ta-IN/te-IN/kn-IN present on macOS Chrome; Windows Chrome typically only has Google हिन्दी; never assume mr/gu/ml/pa/ur). (3) CONSTRAINTS: keep recordings under ~60s (inline limit is 20MB total request per docs, but Vercel serverless body limit ~4.5MB is the real ceiling — 60s of opus ≈ 500KB, fine; base64 adds 33%). Documented audio formats: wav/mp3/aiff/aac/ogg/flac (+webm verified working); max 9.5 hours audio per prompt. (4) UI: 22-language picker seeded from embed_data; demo script line: \"speak in ANY of India's 22 scheduled languages — no language button needed, it detects automatically\" (safe claim for the major languages; Gemini handled both test languages flawlessly, though low-resource ones like Santali/Bodo are untested — demo with hi/te/ta/bn/mr for safety).",
+    "production_plan": "Production stack leads with Bhashini (MeitY Digital India — maximum govt credibility for a Google hackathon India story). Registration is self-serve: register at https://bhashini.gov.in/ulca/user/register# → email verification (check spam) → login → My Profile (https://bhashini.gov.in/ulca/profile) → Generate API key (max 5 keys per integrator, app name lowercase+underscores). No manual approval step is documented, so same-day access is realistic — but I could not complete it in-session (account creation is prohibited for me), so do not bet the demo on it. Call flow (from official GitBook): STEP 1 pipeline config — POST https://meity-auth.ulcacontrib.org/ulca/apis/v0/model/getModelsPipeline with headers userID + ulcaApiKey and body listing pipelineTasks (asr/translation/tts) + pipelineId; response returns serviceIds and a per-pipeline inference API key. STEP 2 compute — POST https://dhruva-api.bhashini.gov.in/services/inference/pipeline with the returned Authorization header and pipelineTasks config {language:{sourceLanguage:\"hi\"},serviceId:\"...\",audioFormat,samplingRate} + inputData.audio[0].audioContent (base64). I probed both endpoints live: dhruva returns 403 {\"detail\":\"Not authenticated\"} (host live, auth enforced), meity-auth returns 500 on empty body (live). Language coverage (from official docs at dibd-bhashini.gitbook.io/bhashini-apis/available-models-for-usage): ASR serviceId \"bhashini/ai4bharat/conformer-multilingual-asr\" covers ALL 22 scheduled languages; TTS \"Bhashini/IITM/TTS\" covers ~22 incl. Bodo/Manipuri/Santali/Kashmiri; translation via \"ai4bharat/indictrans-v2-all-gpu--t4\" / \"bhashini/ai4bharat/indictrans-v3\" covers all 22. Architecture: Gemini 2.5 Flash does open-set spoken-language ID (Bhashini ASR requires sourceLanguage upfront), then routes to the Bhashini per-language ASR/TTS pipeline; commercial fallback = Google Cloud Speech-to-Text v2 (verified Indic locales: as-IN, bn-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, or-IN, pa-Guru-IN, sd-IN, ta-IN, te-IN, en-IN; NO ur-IN — only ur-PK; missing ks/doi/mai/kok/mni/sa/sat/brx) + Cloud Text-to-Speech (verified voices: bn/gu/hi/kn/ml/mr/pa/ta/te/ur/en all -IN; no or-IN/as-IN). Deck line: \"Bhashini for sovereign all-22-language coverage, Google Cloud for enterprise SLA, Gemini for language auto-detection and reasoning.\"",
+    "embed_data": "[{\"code\":\"as\",\"name_en\":\"Assamese\",\"name_native\":\"অসমীয়া\",\"bcp47\":\"as-IN\",\"likely_browser_tts\":false},{\"code\":\"bn\",\"name_en\":\"Bengali\",\"name_native\":\"বাংলা\",\"bcp47\":\"bn-IN\",\"likely_browser_tts\":true},{\"code\":\"brx\",\"name_en\":\"Bodo\",\"name_native\":\"बड़ो\",\"bcp47\":\"brx-IN\",\"likely_browser_tts\":false},{\"code\":\"doi\",\"name_en\":\"Dogri\",\"name_native\":\"डोगरी\",\"bcp47\":\"doi-IN\",\"likely_browser_tts\":false},{\"code\":\"gu\",\"name_en\":\"Gujarati\",\"name_native\":\"ગુજરાતી\",\"bcp47\":\"gu-IN\",\"likely_browser_tts\":true},{\"code\":\"hi\",\"name_en\":\"Hindi\",\"name_native\":\"हिन्दी\",\"bcp47\":\"hi-IN\",\"likely_browser_tts\":true},{\"code\":\"kn\",\"name_en\":\"Kannada\",\"name_native\":\"ಕನ್ನಡ\",\"bcp47\":\"kn-IN\",\"likely_browser_tts\":true},{\"code\":\"ks\",\"name_en\":\"Kashmiri\",\"name_native\":\"کٲشُر\",\"bcp47\":\"ks-IN\",\"likely_browser_tts\":false},{\"code\":\"kok\",\"name_en\":\"Konkani\",\"name_native\":\"कोंकणी\",\"bcp47\":\"kok-IN\",\"likely_browser_tts\":false},{\"code\":\"mai\",\"name_en\":\"Maithili\",\"name_native\":\"मैथिली\",\"bcp47\":\"mai-IN\",\"likely_browser_tts\":false},{\"code\":\"ml\",\"name_en\":\"Malayalam\",\"name_native\":\"മലയാളം\",\"bcp47\":\"ml-IN\",\"likely_browser_tts\":true},{\"code\":\"mni\",\"name_en\":\"Manipuri (Meitei)\",\"name_native\":\"ꯃꯤꯇꯩꯂꯣꯟ\",\"bcp47\":\"mni-IN\",\"likely_browser_tts\":false},{\"code\":\"mr\",\"name_en\":\"Marathi\",\"name_native\":\"मराठी\",\"bcp47\":\"mr-IN\",\"likely_browser_tts\":true},{\"code\":\"ne\",\"name_en\":\"Nepali\",\"name_native\":\"नेपाली\",\"bcp47\":\"ne-IN\",\"likely_browser_tts\":false},{\"code\":\"or\",\"name_en\":\"Odia\",\"name_native\":\"ଓଡ଼ିଆ\",\"bcp47\":\"or-IN\",\"likely_browser_tts\":false},{\"code\":\"pa\",\"name_en\":\"Punjabi\",\"name_native\":\"ਪੰਜਾਬੀ\",\"bcp47\":\"pa-IN\",\"likely_browser_tts\":true},{\"code\":\"sa\",\"name_en\":\"Sanskrit\",\"name_native\":\"संस्कृतम्\",\"bcp47\":\"sa-IN\",\"likely_browser_tts\":false},{\"code\":\"sat\",\"name_en\":\"Santali\",\"name_native\":\"ᱥᱟᱱᱛᱟᱲᱤ\",\"bcp47\":\"sat-IN\",\"likely_browser_tts\":false},{\"code\":\"sd\",\"name_en\":\"Sindhi\",\"name_native\":\"سنڌي\",\"bcp47\":\"sd-IN\",\"likely_browser_tts\":false},{\"code\":\"ta\",\"name_en\":\"Tamil\",\"name_native\":\"தமிழ்\",\"bcp47\":\"ta-IN\",\"likely_browser_tts\":true},{\"code\":\"te\",\"name_en\":\"Telugu\",\"name_native\":\"తెలుగు\",\"bcp47\":\"te-IN\",\"likely_browser_tts\":true},{\"code\":\"ur\",\"name_en\":\"Urdu\",\"name_native\":\"اردو\",\"bcp47\":\"ur-IN\",\"likely_browser_tts\":true}]",
+    "findings": [
+        {
+            "source_name": "Gemini 2.5 Flash — inline audio understanding (ASR + language ID + same-language reply)",
+            "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+            "access": "api-key",
+            "verified": true,
+            "verification_note": "Live POST with x-goog-api-key (key from kisan-vaani/.env.local). Hindi WAV (audio/wav) AND Hindi+Telugu WebM/Opus (audio/webm) all returned 200. Response: candidates[0].content.parts[0].text contained exact JSON {language_bcp47:'hi-IN'/'te', transcript:'मेरी गेहूं की फसल में पीले धब्बे आ गए हैं...', reply_in_same_language:'यह पीला रस्ट रोग या नाइट्रोजन की कमी...'} — word-perfect transcripts. usageMetadata.promptTokensDetails: [{modality:'TEXT'},{modality:'AUDIO',tokenCount:144}]; modelVersion:'gemini-2.5-flash'. audio/webm works despite not being in the docs' format list.",
+            "use": "demo",
+            "notes": "Request shape: contents[0].parts = [{text:prompt},{inline_data:{mime_type,data:base64}}]; generationConfig.responseMimeType:'application/json' for strict JSON. This one call replaces separate ASR + langID + LLM."
+        },
+        {
+            "source_name": "Gemini 2.5 Flash Preview TTS — spoken replies in Indic languages",
+            "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent",
+            "access": "api-key",
+            "verified": true,
+            "verification_note": "Live POST with Hindi text + generationConfig {responseModalities:['AUDIO'],speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName:'Kore'} returned 200 with candidates[0].content.parts[0].inlineData {mimeType:'audio/L16;codec=pcm;rate=24000', data: 249KB base64 PCM}.",
+            "use": "demo",
+            "notes": "Raw 16-bit PCM 24kHz — wrap in 44-byte WAV header server-side or play via Web Audio API. Removes dependence on patchy browser voices for reply speech."
+        },
+        {
+            "source_name": "Gemini API audio docs (formats & limits)",
+            "url": "https://ai.google.dev/gemini-api/docs/audio",
+            "access": "open",
+            "verified": true,
+            "verification_note": "Fetched. Documented input MIME types: audio/wav, audio/mp3, audio/aiff, audio/aac, audio/ogg, audio/flac (webm absent from docs but proven working above). Limits: max 9.5 hours audio per prompt; inline request max 20MB total; audio downsampled to 16kbps mono; 32 tokens/sec of audio. Fields: inline_data{mime_type,data} inline, file_data{file_uri,mime_type} via Files API.",
+            "use": "deck-citation",
+            "notes": "Code samples on the page now show gemini-3.5-flash, but 2.5-flash audio verified live above."
+        },
+        {
+            "source_name": "Bhashini ULCA onboarding (official GitBook)",
+            "url": "https://bhashini.gitbook.io/bhashini-apis/pre-requisites-and-onboarding",
+            "access": "registration",
+            "verified": true,
+            "verification_note": "Fetched. Steps: register at https://bhashini.gov.in/ulca/user/register# → email auth (check spam) → login https://bhashini.gov.in/ulca/user/login → My Profile https://bhashini.gov.in/ulca/profile → 'Generate' API key (max 5 keys; app name lowercase+underscores); userID also taken from My Profile. No manual-approval step documented → same-day access realistic but not guaranteed.",
+            "use": "production",
+            "notes": "I cannot create the account (account creation prohibited for agents); user must register themselves — ~10 min self-serve."
+        },
+        {
+            "source_name": "Bhashini pipeline config endpoint (MeitY ULCA)",
+            "url": "https://meity-auth.ulcacontrib.org/ulca/apis/v0/model/getModelsPipeline",
+            "access": "api-key",
+            "verified": false,
+            "verification_note": "Live POST with empty body returned HTTP 500 (host live, needs userID + ulcaApiKey headers and pipelineTasks body). Could not get real data without a registered account.",
+            "use": "production",
+            "notes": "Returns serviceIds + the Authorization value for the compute call."
+        },
+        {
+            "source_name": "Bhashini Dhruva inference endpoint (ASR/NMT/TTS compute)",
+            "url": "https://dhruva-api.bhashini.gov.in/services/inference/pipeline",
+            "access": "api-key",
+            "verified": false,
+            "verification_note": "Live POST returned HTTP 403 {\"detail\":\"Not authenticated\"} — endpoint exists and is live, auth enforced. No key available this session.",
+            "use": "production",
+            "notes": "Body: pipelineTasks[{taskType:'asr',config:{language:{sourceLanguage},serviceId,audioFormat,samplingRate}}] + inputData.audio[0].audioContent (base64). taskTypes chainable: asr → translation → tts."
+        },
+        {
+            "source_name": "Bhashini available models / language coverage (official GitBook)",
+            "url": "https://dibd-bhashini.gitbook.io/bhashini-apis/available-models-for-usage",
+            "access": "open",
+            "verified": true,
+            "verification_note": "Fetched. ASR serviceId 'bhashini/ai4bharat/conformer-multilingual-asr' lists all 22 scheduled languages (Assamese…Urdu incl. Bodo, Dogri, Kashmiri, Konkani, Maithili, Manipuri, Santali, Sindhi, Sanskrit). TTS 'Bhashini/IITM/TTS' lists ~24 langs incl. Bodo/Manipuri/Santali/Kashmiri/Sindhi. Translation 'ai4bharat/indictrans-v2-all-gpu--t4' + 'bhashini/ai4bharat/indictrans-v3' cover all 22.",
+            "use": "deck-citation",
+            "notes": "This is the 'all 22 scheduled languages' citation for the deck — government (MeitY/Digital India) + AI4Bharat provenance."
+        },
+        {
+            "source_name": "Google Cloud Speech-to-Text v2 — Indic language coverage",
+            "url": "https://cloud.google.com/speech-to-text/v2/docs/speech-to-text-supported-languages",
+            "access": "api-key",
+            "verified": true,
+            "verification_note": "curl'd the docs page and extracted exact locale codes: as-IN, bn-IN, gu-IN, hi-IN, kn-IN, ml-IN, mr-IN, or-IN, pa-Guru-IN, sd-IN, ta-IN, te-IN, en-IN (also ne-NP, ur-PK, bn-BD, si-LK). 13 India locales = 12 scheduled languages + Indian English. NOT covered: ur-IN, ks, doi, mai, kok, mni, brx, sa, sat.",
+            "use": "production",
+            "notes": "Commercial fallback for production SLA; needs GCP project + billing, not same-day-demo material."
+        },
+        {
+            "source_name": "Google Cloud Text-to-Speech — Indic voices",
+            "url": "https://cloud.google.com/text-to-speech/docs/voices",
+            "access": "api-key",
+            "verified": true,
+            "verification_note": "curl'd the voices page: -IN voices exist for bn, en, gu, hi, kn, ml, mr, pa, ta, te, ur (11 locales, 10 scheduled languages). No or-IN, as-IN, or other scheduled languages.",
+            "use": "production",
+            "notes": "Also the best available proxy for which languages Google TTS voices exist on Android."
+        },
+        {
+            "source_name": "Browser speechSynthesis Indic voices — empirical check (Chromium on macOS)",
+            "url": "http://localhost:3199/voices.html",
+            "access": "open",
+            "verified": true,
+            "verification_note": "Ran speechSynthesis.getVoices() in a live Chromium session: 180 voices total; Indic = Lekha|hi-IN, Piya|bn-IN, Vani|ta-IN, Geeta|te-IN, Soumya|kn-IN, Rishi|en-IN — ALL localService (macOS system voices). Zero voices for mr, gu, ml, pa, ur, or, as, ne or any other scheduled language.",
+            "use": "rejected",
+            "notes": "Coverage matrix: macOS Chrome = hi/bn/ta/te/kn only; Windows Chrome desktop typically only 'Google हिन्दी' (network); Chrome Android delegates to Google Speech Services (expected hi/bn/ta/te/mr/gu/kn/ml/ur — unverified, and user must have voice data installed). Verdict: too patchy to demo on — use as optional fast-path only, Gemini TTS as the real path."
+        },
+        {
+            "source_name": "Bhashini on APISetu directory (extra govt citation)",
+            "url": "https://directory.apisetu.gov.in/api-collection/bhashini",
+            "access": "registration",
+            "verified": false,
+            "verification_note": "Found via search, not fetched — listed as 'Bhashini - Digital India Corporation - APIs' on the official India APISetu directory.",
+            "use": "deck-citation",
+            "notes": "Secondary credibility citation showing Bhashini is a listed national API."
+        }
+    ]
 }

@@ -25,10 +25,43 @@ import { LANGS_FULL, T_FULL, SAMPLE_QUERIES_FULL } from "@/lib/i18n-full";
 import { speak, stopSpeaking, createRecognizer } from "@/lib/speech";
 import { startRecording, stopRecording } from "@/lib/recorder";
 import { createLiveTicket } from "@/lib/ops-live";
+import {
+  IVR_ASK_FREEFORM,
+  IVR_ASK_NEXT_PROBLEM,
+  IVR_FOLLOWUP_MENU,
+  IVR_REPEAT_HINT,
+  OTHER_OPTION_DIGIT,
+  SMS_ASK_FREEFORM,
+  SMS_OTHER_OPTION_HINT,
+  followupPrompt,
+  withIvrRepeatHint,
+  type AdvisoryMessage,
+  type AdvisoryPhase,
+} from "@/lib/advisory-flow";
+import {
+  formatMandiPriceHi,
+  mandiAskForStep,
+  mandiCropLabelHi,
+  normalizeMandiCommodity,
+  startMandiContext,
+  type MandiContext,
+  type MandiStep,
+} from "@/lib/mandi-flow";
+import { resolveMandiGeo } from "@/lib/mandi-geo";
+import { handleMandiInput, mandiEntryMenu, type MandiHandlerResult, type MandiMenuHandlerResult } from "@/lib/mandi-handler";
 import type { VoiceResult, MandiResponse } from "@/lib/types";
 
 type Mode = "call" | "sms" | "photo";
-type CallState = "idle" | "dialing" | "menu" | "listening" | "mandi" | "thinking" | "answered";
+type CallState =
+  | "idle"
+  | "dialing"
+  | "menu"
+  | "listening"
+  | "clarifying"
+  | "followup"
+  | "mandi"
+  | "thinking"
+  | "answered";
 type Bubble = { who: "ivr" | "farmer"; text: string };
 type SmsMsg = { who: "farmer" | "kisanvaani"; text: string };
 
@@ -54,17 +87,6 @@ const MODES: { id: Mode; icon: LucideIcon; label: string; sub: string }[] = [
   { id: "sms", icon: MessageSquare, label: "SMS", sub: "Any 2G handset" },
   { id: "photo", icon: Camera, label: "Photo diagnosis", sub: "Via relay worker" },
 ];
-
-// Keypad-2 mandi flow: crops + state from the pilot's first district (Sehore, MP).
-const MANDI_CROPS: string[] = DISTRICTS[0]?.crops ?? ["Wheat", "Soybean", "Cotton"];
-const MANDI_STATE = DISTRICTS[0]?.state ?? "Madhya Pradesh";
-
-// Cached mandi quotes so the flow works even while /api/mandi is unavailable.
-const CACHED_MANDI: Record<string, { market: string; modal: number }> = {
-  Wheat: { market: "Sehore", modal: 2450 },
-  Soybean: { market: "Ashta", modal: 4720 },
-  Cotton: { market: "Khargone", modal: 7040 },
-};
 
 export default function DemoClient() {
   const [lang, setLang] = useState<string>("hi"); // 12 language codes + "auto"
@@ -96,6 +118,36 @@ export default function DemoClient() {
   const [smsInput, setSmsInput] = useState("");
   const [smsSending, setSmsSending] = useState(false);
   const [smsSource, setSmsSource] = useState<string | null>(null);
+  const [advisoryHistory, setAdvisoryHistory] = useState<AdvisoryMessage[]>([]);
+  const [advisoryPhase, setAdvisoryPhase] = useState<AdvisoryPhase | null>(null);
+  const [advisoryOptions, setAdvisoryOptions] = useState<string[]>([]);
+  const advisorySessionRef = useRef({
+    history: [] as AdvisoryMessage[],
+    phase: null as AdvisoryPhase | null,
+    options: [] as string[],
+    mandi: undefined as MandiContext | undefined,
+  });
+  const [mandiContext, setMandiContext] = useState<MandiContext | undefined>();
+  const lastSpokenRef = useRef("");
+  const mandiListenStepRef = useRef<MandiStep | null>(null);
+  const weatherListenRef = useRef(false);
+
+  const speakIvr = useCallback(
+    (text: string) => {
+      lastSpokenRef.current = text;
+      speak(text, bcp47);
+    },
+    [bcp47],
+  );
+
+  useEffect(() => {
+    advisorySessionRef.current = {
+      history: advisoryHistory,
+      phase: advisoryPhase,
+      options: advisoryOptions,
+      mandi: mandiContext,
+    };
+  }, [advisoryHistory, advisoryPhase, advisoryOptions, mandiContext]);
 
   // ---- Photo state ----
   const [diag, setDiag] = useState<Diagnosis | null>(null);
@@ -120,6 +172,15 @@ export default function DemoClient() {
 
   useEffect(() => () => stopSpeaking(), []);
 
+  const resetAdvisory = useCallback(() => {
+    setAdvisoryHistory([]);
+    setAdvisoryPhase(null);
+    setAdvisoryOptions([]);
+    setMandiContext(undefined);
+    mandiListenStepRef.current = null;
+    weatherListenRef.current = false;
+  }, []);
+
   const endCall = useCallback(() => {
     stopSpeaking();
     recRef.current?.stop?.();
@@ -133,7 +194,8 @@ export default function DemoClient() {
     setMicDenied(false);
     setDetected(null);
     setTtsNote(false);
-  }, []);
+    resetAdvisory();
+  }, [resetAdvisory]);
 
   // Reset transient state when switching language or mode
   useEffect(() => {
@@ -141,33 +203,348 @@ export default function DemoClient() {
     stopSpeaking();
     setSpeaking(false);
     setKvkTicket(null);
-  }, [lang, mode, endCall]);
+    resetAdvisory();
+    setSmsThread([]);
+  }, [lang, mode, endCall, resetAdvisory]);
 
   const startCall = () => {
     setBubbles([]);
     setCallState("dialing");
     setTimeout(() => {
       setCallState("menu");
-      setBubbles([{ who: "ivr", text: t.ivrGreeting }]);
-      speak(t.ivrGreeting, bcp47);
+      const greeting = withIvrRepeatHint(t.ivrGreeting);
+      setBubbles([{ who: "ivr", text: greeting }]);
+      speakIvr(greeting);
     }, 1200);
   };
 
+  const applyAdvisoryResponse = (
+    data: {
+      text: string;
+      source: string;
+      phase: AdvisoryPhase | "done" | "listening" | "mandi" | "weather";
+      options?: string[];
+      history?: AdvisoryMessage[];
+      mandi?: MandiContext;
+      mandiStep?: MandiStep;
+    },
+    channel: "ivr" | "sms",
+    farmerText: string,
+  ) => {
+    if (channel === "ivr") {
+      const spoken = withIvrRepeatHint(data.text);
+      setBubbles((b) => [...b, { who: "ivr", text: spoken }]);
+      setCallSource(data.source);
+      speakIvr(spoken);
+    } else {
+      setSmsThread((th) => [...th, { who: "kisanvaani", text: data.text }]);
+      setSmsSource(data.source);
+    }
+
+    if (data.phase === "listening") {
+      // Options didn't match — farmer will speak/write freely next.
+      setAdvisoryOptions([]);
+      setAdvisoryPhase("clarify");
+      advisorySessionRef.current = {
+        history: advisorySessionRef.current.history,
+        phase: "clarify",
+        options: [],
+        mandi: undefined,
+      };
+      if (channel === "ivr") setCallState("listening");
+      return;
+    }
+
+    if (data.phase === "clarify") {
+      const nextHistory: AdvisoryMessage[] = [
+        ...advisorySessionRef.current.history,
+        { role: "farmer", text: farmerText },
+        { role: "advisor", text: data.text, kind: "clarify" },
+      ];
+      const nextOptions = data.options ?? [];
+      advisorySessionRef.current = {
+        history: nextHistory,
+        phase: "clarify",
+        options: nextOptions,
+        mandi: undefined,
+      };
+      setAdvisoryHistory(nextHistory);
+      setAdvisoryPhase("clarify");
+      setAdvisoryOptions(nextOptions);
+      if (channel === "ivr") setCallState("clarifying");
+      return;
+    }
+
+    if (data.phase === "weather") {
+      advisorySessionRef.current = {
+        history: [],
+        phase: "weather",
+        options: [],
+        mandi: undefined,
+      };
+      setAdvisoryPhase("weather");
+      setAdvisoryOptions([]);
+      weatherListenRef.current = true;
+      if (channel === "ivr") {
+        setCallState("listening");
+        speakIvr(data.text);
+      }
+      return;
+    }
+
+    if (data.phase === "mandi") {
+      const nextMandi = data.mandi ?? startMandiContext();
+      advisorySessionRef.current = {
+        history: [],
+        phase: "mandi",
+        options: [],
+        mandi: nextMandi,
+      };
+      setMandiContext(nextMandi);
+      setAdvisoryPhase("mandi");
+      setAdvisoryOptions([]);
+      mandiListenStepRef.current = nextMandi.step;
+      if (channel === "ivr") {
+        setCallState("listening");
+        speakIvr(data.text);
+      }
+      return;
+    }
+
+    if (data.phase === "followup") {
+      const nextHistory = data.history ?? advisorySessionRef.current.history;
+      const nextOptions = data.options ?? [];
+      advisorySessionRef.current = {
+        history: nextHistory,
+        phase: "followup",
+        options: nextOptions,
+        mandi: undefined,
+      };
+      setAdvisoryHistory(nextHistory);
+      setAdvisoryPhase("followup");
+      setAdvisoryOptions(nextOptions);
+      if (channel === "ivr") setCallState("followup");
+      return;
+    }
+
+    if (data.phase === "done") {
+      resetAdvisory();
+      if (channel === "ivr") setCallState("answered");
+      return;
+    }
+
+    resetAdvisory();
+    if (channel === "ivr") setCallState("answered");
+  };
+
+  const callAdvisory = async (text: string, channel: "ivr" | "sms") => {
+    const session = advisorySessionRef.current;
+    const res = await fetch("/api/advisory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: text,
+        lang: uiLang,
+        channel,
+        history: session.history,
+        phase: session.phase,
+        options: session.options.length ? session.options : undefined,
+        mandi: session.mandi,
+      }),
+    });
+    return res.json() as Promise<{
+      text: string;
+      source: string;
+      phase: AdvisoryPhase | "done" | "listening" | "mandi" | "weather";
+      options?: string[];
+      history?: AdvisoryMessage[];
+      mandi?: MandiContext;
+      mandiStep?: MandiStep;
+    }>;
+  };
+
+  const beginMandiIvr = () => {
+    const entry = mandiEntryMenu("ivr");
+    const ask = withIvrRepeatHint(entry.text);
+    setCallState("listening");
+    setBubbles((b) => [...b, { who: "ivr", text: ask }]);
+    advisorySessionRef.current = {
+      history: [],
+      phase: "mandi",
+      options: [],
+      mandi: entry.mandi,
+    };
+    setMandiContext(entry.mandi);
+    setAdvisoryPhase("mandi");
+    setAdvisoryOptions([]);
+    mandiListenStepRef.current = entry.step;
+    speakIvr(ask);
+  };
+
+  const applyMandiIvrResult = async (result: MandiHandlerResult) => {
+    if (result.kind === "price") {
+      await askMandi(result.commodity, result.district, result.state);
+      return;
+    }
+    const menu = result as MandiMenuHandlerResult;
+    const spoken = withIvrRepeatHint(menu.text);
+    setBubbles((b) => [...b, { who: "ivr", text: spoken }]);
+    speakIvr(spoken);
+    advisorySessionRef.current = {
+      history: [],
+      phase: "mandi",
+      options: [],
+      mandi: menu.mandi,
+    };
+    setMandiContext(menu.mandi);
+    setAdvisoryPhase("mandi");
+    setAdvisoryOptions([]);
+    mandiListenStepRef.current = menu.step;
+    setCallState("listening");
+  };
+
+  const chooseAdvisoryOption = async (digit: string, label: string, channel: "ivr" | "sms") => {
+    if (advisoryPhase === "mandi") {
+      if (channel === "sms") {
+        setSmsThread((th) => [...th, { who: "farmer", text: digit }]);
+        setSmsSending(true);
+        try {
+          const data = await callAdvisory(digit, "sms");
+          applyAdvisoryResponse(data, "sms", digit);
+        } catch {
+          /* ignore */
+        }
+        setSmsSending(false);
+      }
+      return;
+    }
+    if (advisoryPhase === "followup") {
+      if (digit === "3" || /done|bas|dhanyavaad|thank/i.test(label)) {
+        const thanks =
+          "किसानवाणी से संपर्क करने के लिए धन्यवाद। कभी भी 1800-180-1551 पर कॉल करें।";
+        if (channel === "ivr") {
+          stopSpeaking();
+          setBubbles((b) => [...b, { who: "farmer", text: `[ ${digit} ]` }, { who: "ivr", text: thanks }]);
+          speakIvr(thanks);
+          setCallState("answered");
+        } else {
+          setSmsThread((th) => [...th, { who: "farmer", text: digit }, { who: "kisanvaani", text: thanks }]);
+        }
+        resetAdvisory();
+        return;
+      }
+      if (digit === "2" || /mandi|bhav|price/i.test(label)) {
+        if (channel === "ivr") {
+          stopSpeaking();
+          setBubbles((b) => [...b, { who: "farmer", text: `[ ${digit} ]` }]);
+          resetAdvisory();
+          beginMandiIvr();
+        } else {
+          setSmsThread((th) => [...th, { who: "farmer", text: digit }]);
+          resetAdvisory();
+          setSmsSending(true);
+          try {
+            const data = await callAdvisory(digit, "sms");
+            applyAdvisoryResponse(data, "sms", digit);
+          } catch {
+            /* ignore */
+          }
+          setSmsSending(false);
+        }
+        return;
+      }
+      // Option 1 — new problem
+      resetAdvisory();
+      if (channel === "ivr") {
+        stopSpeaking();
+        setBubbles((b) => [...b, { who: "farmer", text: `[ ${digit} ]` }]);
+        setCallState("listening");
+        setBubbles((b) => [...b, { who: "ivr", text: IVR_ASK_NEXT_PROBLEM }]);
+        speakIvr(withIvrRepeatHint(IVR_ASK_NEXT_PROBLEM));
+      } else {
+        setSmsThread((th) => [
+          ...th,
+          { who: "farmer", text: digit },
+          { who: "kisanvaani", text: "अपनी फसल की समस्या या कृषि से जुड़ा प्रश्न लिखकर भेजें।" },
+        ]);
+      }
+      return;
+    }
+
+    if (channel === "ivr") {
+      stopSpeaking();
+      setBubbles((b) => [...b, { who: "farmer", text: `[ ${digit} ] ${label}` }]);
+      setCallState("thinking");
+    } else {
+      setSmsThread((th) => [...th, { who: "farmer", text: digit }]);
+      setSmsSending(true);
+    }
+
+    try {
+      const data = await callAdvisory(digit, channel);
+      applyAdvisoryResponse(data, channel, label);
+    } catch {
+      if (channel === "ivr") setCallState("clarifying");
+    } finally {
+      if (channel === "sms") setSmsSending(false);
+    }
+  };
+
   const pressKey = (k: string) => {
+    if (k === "0" && lastSpokenRef.current) {
+      stopSpeaking();
+      speakIvr(lastSpokenRef.current);
+      return;
+    }
+    if (callState === "clarifying" && k === OTHER_OPTION_DIGIT) {
+      stopSpeaking();
+      setBubbles((b) => [...b, { who: "farmer", text: `[ ${k} ]` }]);
+      setAdvisoryOptions([]);
+      advisorySessionRef.current = {
+        history: advisorySessionRef.current.history,
+        phase: "clarify",
+        options: [],
+        mandi: undefined,
+      };
+      setCallState("listening");
+      const ask = withIvrRepeatHint(IVR_ASK_FREEFORM);
+      setBubbles((b) => [...b, { who: "ivr", text: ask }]);
+      speakIvr(ask);
+      return;
+    }
+    if ((callState === "clarifying" || callState === "followup") && ["1", "2", "3"].includes(k)) {
+      const idx = Number.parseInt(k, 10) - 1;
+      const label = advisoryOptions[idx];
+      if (label) void chooseAdvisoryOption(k, label, "ivr");
+      return;
+    }
     if (callState !== "menu") return;
     if (k === "1") {
       stopSpeaking();
+      resetAdvisory();
       setCallState("listening");
-      const ask = lang === "auto" ? `${t.ivrAskProblem} ${t.recordHint}` : t.ivrAskProblem;
+      const ask = withIvrRepeatHint(
+        lang === "auto" ? `${t.ivrAskProblem} ${t.recordHint}` : t.ivrAskProblem,
+      );
       setBubbles((b) => [...b, { who: "farmer", text: `[ ${k} ]` }, { who: "ivr", text: ask }]);
-      speak(ask, bcp47);
+      speakIvr(ask);
     }
     if (k === "2") {
       stopSpeaking();
-      setCallState("mandi");
-      const ask = `${t.mandiPrices}: ${MANDI_CROPS.join(" / ")}?`;
+      resetAdvisory();
+      setBubbles((b) => [...b, { who: "farmer", text: `[ ${k} ]` }]);
+      beginMandiIvr();
+    }
+    if (k === "3") {
+      stopSpeaking();
+      resetAdvisory();
+      weatherListenRef.current = true;
+      setCallState("listening");
+      const ask = withIvrRepeatHint(
+        "मौसम सलाह — बीप के बाद अपने जिले का नाम बोलें। भारत का कोई भी जिला चलता है।",
+      );
       setBubbles((b) => [...b, { who: "farmer", text: `[ ${k} ]` }, { who: "ivr", text: ask }]);
-      speak(ask, bcp47);
+      speakIvr(ask);
     }
   };
 
@@ -175,18 +552,24 @@ export default function DemoClient() {
     if (!text.trim()) return;
     stopSpeaking();
     setBubbles((b) => [...b, { who: "farmer", text }]);
+    if (mandiListenStepRef.current) {
+      mandiListenStepRef.current = null;
+      setCallInput("");
+      const mandi = advisorySessionRef.current.mandi ?? startMandiContext();
+      const result = handleMandiInput(text.trim(), mandi, "ivr", false);
+      await applyMandiIvrResult(result);
+      return;
+    }
+    if (weatherListenRef.current) {
+      weatherListenRef.current = false;
+      setCallInput("");
+      await askWeather(text.trim());
+      return;
+    }
     setCallState("thinking");
     try {
-      const res = await fetch("/api/advisory", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: text, lang: uiLang, channel: "ivr" }),
-      });
-      const data = await res.json();
-      setBubbles((b) => [...b, { who: "ivr", text: data.text }]);
-      setCallSource(data.source);
-      setCallState("answered");
-      speak(data.text, bcp47);
+      const data = await callAdvisory(text, "ivr");
+      applyAdvisoryResponse(data, "ivr", text);
     } catch {
       setCallState("listening");
     }
@@ -231,40 +614,107 @@ export default function DemoClient() {
     setRecording(true);
   };
 
-  // ---- KEYPAD 2: mandi bhav ----
-  const askMandi = async (crop: string) => {
+  // ---- KEYPAD 3: weather advisory (OpenWeatherMap) ----
+  const askWeather = async (place: string) => {
     stopSpeaking();
-    setBubbles((b) => [...b, { who: "farmer", text: crop }]);
     setCallState("thinking");
-    const cached = CACHED_MANDI[crop] ?? { market: "Sehore", modal: 2450 };
-    let market = cached.market;
-    let modal = cached.modal;
+    const geo = resolveMandiGeo(place);
+    let line =
+      uiLang === "en"
+        ? "Weather is temporarily unavailable. Please try again shortly."
+        : "मौसम अभी उपलब्ध नहीं है। कृपया थोड़ी देर बाद फिर कोशिश करें।";
     let source = "cached";
     try {
-      const res = await fetch(
-        `/api/mandi?crop=${encodeURIComponent(crop)}&state=${encodeURIComponent(MANDI_STATE)}`,
-        { signal: AbortSignal.timeout(8000) }
-      );
+      const qs = new URLSearchParams({ district: geo.district || place });
+      if (geo.state) qs.set("state", geo.state);
+      const res = await fetch(`/api/weather?${qs.toString()}`, {
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = (await res.json()) as { textHi?: string; textEn?: string; source?: string };
+      if (data.textHi || data.textEn) {
+        line = uiLang === "en" ? (data.textEn ?? data.textHi ?? line) : (data.textHi ?? line);
+        source = data.source ?? source;
+      }
+    } catch {
+      /* keep unavailable message */
+    }
+    const spoken = withIvrRepeatHint(line);
+    setBubbles((b) => [...b, { who: "ivr", text: spoken }]);
+    setCallSource(source);
+    setCallState("answered");
+    speakIvr(spoken);
+  };
+
+  // ---- KEYPAD 2: mandi bhav ----
+  const askMandi = async (crop: string, districtName?: string, stateName?: string) => {
+    stopSpeaking();
+    setCallState("thinking");
+    const normalizedCrop = normalizeMandiCommodity(crop);
+    const geo = districtName ? resolveMandiGeo(districtName) : null;
+    const districtFilter = geo?.district ?? districtName;
+    const state =
+      stateName?.trim() || geo?.state || advisorySessionRef.current.mandi?.state || "";
+    let market = districtFilter ?? "";
+    let resultDistrict = districtFilter ?? market;
+    let modal = 0;
+    let source = "cached";
+    try {
+      const qs = new URLSearchParams({ crop: normalizedCrop });
+      if (state?.trim()) qs.set("state", state.trim());
+      if (districtFilter?.trim()) qs.set("district", districtFilter.trim());
+      const res = await fetch(`/api/mandi?${qs.toString()}`, { signal: AbortSignal.timeout(30000) });
       if (res.ok) {
         const data = (await res.json()) as MandiResponse;
         const row = data.rows?.[0];
         if (row && row.modalPrice > 0) {
           market = row.market;
           modal = row.modalPrice;
+          resultDistrict = row.district;
           source = data.source;
         }
       }
     } catch {
-      /* keep cached quote */
+      /* keep unavailable message below */
     }
-    const line =
-      uiLang === "en"
-        ? `${crop} price: ₹${modal} per quintal at ${market} mandi.`
-        : `${crop} ka bhav: ${market} mandi mein ₹${modal} prati quintal.`;
-    setBubbles((b) => [...b, { who: "ivr", text: line }]);
+    if (modal <= 0) {
+      const spoken = withIvrRepeatHint(
+        `${mandiCropLabelHi(normalizedCrop)} का भाव ${resultDistrict ?? "इस जिले"} के लिए अभी उपलब्ध नहीं है। कृपया थोड़ी देर बाद फिर कोशिश करें।\n\n${IVR_FOLLOWUP_MENU}`,
+      );
+      setBubbles((b) => [...b, { who: "ivr", text: spoken }]);
+      setCallSource(source);
+      setCallState("followup");
+      setAdvisoryPhase("followup");
+      const follow = followupPrompt("ivr");
+      setAdvisoryOptions(follow.options ?? []);
+      advisorySessionRef.current = {
+        history: [],
+        phase: "followup",
+        options: follow.options ?? [],
+        mandi: undefined,
+      };
+      speakIvr(spoken);
+      return;
+    }
+    const line = formatMandiPriceHi({
+      cropKey: normalizedCrop,
+      market,
+      district: resultDistrict,
+      modalPrice: modal,
+    });
+    const follow = followupPrompt("ivr");
+    const spoken = withIvrRepeatHint(`${line}\n\n${IVR_FOLLOWUP_MENU}`);
+    setBubbles((b) => [...b, { who: "ivr", text: spoken }]);
     setCallSource(source);
-    setCallState("answered");
-    speak(line, bcp47);
+    setCallState("followup");
+    setAdvisoryPhase("followup");
+    setAdvisoryOptions(follow.options ?? []);
+    advisorySessionRef.current = {
+      history: [],
+      phase: "followup",
+      options: follow.options ?? [],
+      mandi: undefined,
+    };
+    speakIvr(spoken);
   };
 
   const toggleMic = () => {
@@ -290,14 +740,8 @@ export default function DemoClient() {
     setSmsInput("");
     setSmsSending(true);
     try {
-      const res = await fetch("/api/advisory", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: text, lang: uiLang, channel: "sms" }),
-      });
-      const data = await res.json();
-      setSmsThread((th) => [...th, { who: "kisanvaani", text: data.text }]);
-      setSmsSource(data.source);
+      const data = await callAdvisory(text, "sms");
+      applyAdvisoryResponse(data, "sms", text);
     } catch {
       /* keep thread as-is */
     }
@@ -491,7 +935,13 @@ export default function DemoClient() {
                           <div className="text-xs text-forest/60">1800-180-KISAN</div>
                         </div>
                       )}
-                      {(callState === "menu" || callState === "listening" || callState === "mandi" || callState === "thinking" || callState === "answered") && (
+                      {(callState === "menu" ||
+                        callState === "listening" ||
+                        callState === "clarifying" ||
+                        callState === "followup" ||
+                        callState === "mandi" ||
+                        callState === "thinking" ||
+                        callState === "answered") && (
                         <div className="space-y-2">
                           <div className="text-center text-[10px] text-forest/60 border-b border-forest/10 pb-1 mb-2">
                             {t.connected} · 00:{String(bubbles.length * 7 + 12).padStart(2, "0")}
@@ -575,14 +1025,41 @@ export default function DemoClient() {
                       key={k}
                       onClick={() => pressKey(k)}
                       className={`keypad-btn rounded-md py-1.5 text-sm font-semibold border ${
-                        (k === "1" || k === "2") && callState === "menu"
+                        ((k === "1" || k === "2" || k === "3") && callState === "menu") ||
+                        (["1", "2", "3"].includes(k) &&
+                          (callState === "clarifying" || callState === "followup") &&
+                          advisoryOptions[Number.parseInt(k, 10) - 1]) ||
+                        (k === OTHER_OPTION_DIGIT && callState === "clarifying") ||
+                        (k === "0" &&
+                          mode === "call" &&
+                          !["idle", "dialing"].includes(callState))
                           ? "bg-turmeric-soft/90 text-ink border-turmeric"
                           : "bg-zinc-700 text-zinc-200 border-zinc-600"
                       }`}
                     >
                       {k}
-                      {k === "1" && <span className="block text-[8px] font-normal -mt-0.5">फसल</span>}
-                      {k === "2" && <span className="block text-[8px] font-normal -mt-0.5">भाव</span>}
+                      {k === "1" && callState === "menu" && (
+                        <span className="block text-[8px] font-normal -mt-0.5">फसल</span>
+                      )}
+                      {k === "2" && callState === "menu" && (
+                        <span className="block text-[8px] font-normal -mt-0.5">भाव</span>
+                      )}
+                      {k === "3" && callState === "menu" && (
+                        <span className="block text-[8px] font-normal -mt-0.5">मौसम</span>
+                      )}
+                      {["1", "2", "3"].includes(k) &&
+                        (callState === "clarifying" || callState === "followup") &&
+                        advisoryOptions[Number.parseInt(k, 10) - 1] && (
+                          <span className="block text-[7px] font-normal -mt-0.5 leading-tight line-clamp-2">
+                            {advisoryOptions[Number.parseInt(k, 10) - 1].slice(0, 12)}
+                          </span>
+                        )}
+                      {k === OTHER_OPTION_DIGIT && callState === "clarifying" && (
+                        <span className="block text-[7px] font-normal -mt-0.5">बोलें</span>
+                      )}
+                      {k === "0" && mode === "call" && !["idle", "dialing"].includes(callState) && (
+                        <span className="block text-[8px] font-normal -mt-0.5">दोहराएँ</span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -719,21 +1196,49 @@ export default function DemoClient() {
               </div>
             )}
 
-            {mode === "call" && callState === "mandi" && (
+            {mode === "call" && (callState === "clarifying" || callState === "followup") && advisoryOptions.length > 0 && (
               <div className="mt-4 rounded-xl bg-white border border-forest/15 p-4 rise">
-                <div className="text-xs font-semibold text-ink-soft mb-2">{t.mandiPrices} — {MANDI_STATE}</div>
-                <div className="flex flex-wrap gap-2">
-                  {MANDI_CROPS.map((c) => (
+                <div className="text-xs font-semibold text-ink-soft mb-2">
+                  {callState === "clarifying"
+                    ? "Press the number closest to your situation"
+                    : "Anything else? Press a number on the keypad"}
+                </div>
+                <div className="space-y-2">
+                  {advisoryOptions.map((opt, i) => (
                     <button
-                      key={c}
-                      onClick={() => askMandi(c)}
-                      className="text-sm bg-leaf-mist text-forest rounded-full px-4 py-2 hover:bg-leaf/20 font-medium"
+                      key={`${opt}-${i}`}
+                      onClick={() => chooseAdvisoryOption(String(i + 1), opt, "ivr")}
+                      className="w-full text-left text-sm bg-leaf-mist text-forest rounded-lg px-3 py-2 hover:bg-leaf/20 font-medium"
                     >
-                      {c}
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-turmeric text-white text-xs mr-2">
+                        {i + 1}
+                      </span>
+                      {opt}
                     </button>
                   ))}
+                  {callState === "clarifying" && (
+                    <button
+                      onClick={() => pressKey(OTHER_OPTION_DIGIT)}
+                      className="w-full text-left text-sm bg-turmeric-soft/50 text-ink rounded-lg px-3 py-2 hover:bg-turmeric-soft/80 font-medium border border-turmeric/30"
+                    >
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-turmeric text-white text-xs mr-2">
+                        9
+                      </span>
+                      कोई विकल्प मेल नहीं — खुद बोलें
+                    </button>
+                  )}
                 </div>
-                <div className="text-[11px] text-ink-soft mt-2">Prices: Agmarknet; a cached quote is used if the feed is unavailable.</div>
+              </div>
+            )}
+
+            {mode === "call" && callState === "listening" && advisoryPhase === "mandi" && (
+              <div className="mt-3 rounded-xl bg-leaf-mist/40 border border-forest/10 px-3 py-2 text-xs text-ink-soft">
+                {t.mandiPrices} (pan-India) —{" "}
+                {mandiContext?.step === "crop"
+                  ? `फसल बताएँ${mandiContext.district ? ` · ${mandiContext.district}` : ""}`
+                  : mandiContext?.step === "state"
+                    ? "राज्य बताएँ"
+                    : "जिला बताएँ (भारत का कोई भी जिला)"}
               </div>
             )}
 
@@ -753,6 +1258,49 @@ export default function DemoClient() {
 
             {mode === "sms" && (
               <div className="mt-4 rounded-xl bg-white border border-forest/15 p-4">
+                {advisoryPhase === "mandi" && (
+                  <div className="mb-3 text-[11px] text-ink-soft border border-forest/10 rounded-lg px-3 py-2 bg-paper">
+                    {mandiAskForStep(mandiContext?.step ?? "district", "sms")}
+                  </div>
+                )}
+                {advisoryPhase === "weather" && (
+                  <div className="mb-3 text-[11px] text-ink-soft border border-forest/10 rounded-lg px-3 py-2 bg-paper">
+                    मौसम — जिले या शहर का नाम लिखकर भेजें। उदाहरण: Noida, कानपुर देहात
+                  </div>
+                )}
+                {(advisoryPhase === "clarify" || advisoryPhase === "followup") &&
+                  advisoryOptions.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    <div className="text-xs font-semibold text-ink-soft">
+                      {advisoryPhase === "clarify"
+                        ? "Reply with the closest number:"
+                        : "Need anything else? Reply with a number:"}
+                    </div>
+                    {advisoryOptions.map((opt, i) => (
+                      <button
+                        key={`${opt}-${i}`}
+                        onClick={() => chooseAdvisoryOption(String(i + 1), opt, "sms")}
+                        disabled={smsSending}
+                        className="w-full text-left text-xs bg-leaf-mist text-forest rounded-lg px-3 py-2 hover:bg-leaf/20 font-medium disabled:opacity-50"
+                      >
+                        {i + 1}) {opt}
+                      </button>
+                    ))}
+                    {advisoryPhase === "clarify" && (
+                      <div className="text-[11px] text-ink-soft border border-forest/10 rounded-lg px-3 py-2 bg-paper">
+                        {SMS_OTHER_OPTION_HINT}
+                        <button
+                          type="button"
+                          disabled={smsSending}
+                          onClick={() => sendSms(OTHER_OPTION_DIGIT)}
+                          className="block mt-1.5 text-forest font-medium hover:underline disabled:opacity-50"
+                        >
+                          या 9 भेजें → {SMS_ASK_FREEFORM}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2 mb-3">
                   {samples.sms.map((q) => (
                     <button
@@ -932,7 +1480,15 @@ export default function DemoClient() {
               )}
               {(callSource || smsSource) && mode !== "photo" && (
                 <div className="text-[11px] text-leaf-mist/70 mt-4 text-right">
-                  {(mode === "call" ? callSource : smsSource) === "gemini" ? "Source: live Gemini 2.5 Flash response" : (mode === "call" ? callSource : smsSource) === "agmarknet" ? "Source: live Agmarknet mandi prices" : "Source: cached fallback response (offline-safe)"}
+                  {(mode === "call" ? callSource : smsSource) === "gemini"
+                    ? "Source: live Gemini response"
+                    : (mode === "call" ? callSource : smsSource) === "data.gov.in"
+                      ? "Source: live data.gov.in mandi prices"
+                      : (mode === "call" ? callSource : smsSource) === "agmarknet"
+                        ? "Source: live Agmarknet mandi prices"
+                        : (mode === "call" ? callSource : smsSource) === "openweathermap"
+                          ? "Source: live OpenWeatherMap"
+                          : "Source: cached fallback response (offline-safe)"}
                 </div>
               )}
             </div>

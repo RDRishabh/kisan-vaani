@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
         "किसानवाणी: फोटो की जाँच अभी नहीं हो पाई। कृपया कुछ देर बाद दोबारा भेजें, या समस्या लिखकर भेजें। मदद: 1800-180-1551";
     }
   } else if (body) {
-    reply = await textAdvisory(body);
+    reply = (await textAdvisory(body, params.From ?? undefined)).join("\n\n");
     logQuery({ channel: "sms", lang: "hi", query: body, responseSource: "telephony-live" });
   } else {
     reply =

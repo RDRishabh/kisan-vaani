@@ -25,11 +25,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let reply = await textAdvisory(body);
-  // The "website link shared by SMS" claim must be literally true: append the
-  // site link when the advisory leaves room in a two-segment message.
+  const parts = await textAdvisory(body, params.From ?? undefined);
+  // Append site link to the first segment only when it fits — never trim the menu SMS.
   const link = " Photo/awaaz se salah: kisan-vaani.vercel.app";
-  if (reply.length + link.length <= 306) reply += link;
+  const messages = parts.map((part, index) => {
+    let text = part;
+    if (index === 0 && text.length + link.length <= 480) text += link;
+    return `<Message>${escapeXml(text)}</Message>`;
+  });
   logQuery({ channel: "sms", lang: "hi", query: body, responseSource: "telephony-live" });
-  return twiml(`<Message>${escapeXml(reply)}</Message>`);
+  return twiml(messages.join(""));
 }

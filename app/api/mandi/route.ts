@@ -1,17 +1,11 @@
-// GET /api/mandi?crop=Wheat&state=Madhya+Pradesh — live Agmarknet 2.0 prices.
-// Spec + quirks verified in research/crop-agronomy.json:
-//   POST https://api.agmarknet.gov.in/v1/daily-price-arrival/report
-//   - all body values are STRINGS; "group" is REQUIRED or the commodity filter
-//     is silently ignored; 'All' sentinel ids: state 100000, district 100001,
-//     market 100002, variety 100007, grade 100003, type 100004 (=Price)
-//   - the state filter is NOT honored server-side → fetch all-India and filter
-//     client-side on state_name
-//   - prices are strings with commas ("2,450.00"); arrival_date is DD-MM-YYYY
-//   - calls take 2-6s → in-memory 45-min cache per commodity
-// Fallback: realistic cached rows for the crop (source "cached").
+// GET /api/mandi?crop=Wheat&state=Madhya+Pradesh — live mandi prices.
+// Primary (when DATA_GOV_IN_API_KEY is set): data.gov.in resource 35985678-…
+// Fallback: Agmarknet 2.0 POST API (keyless). Last resort: cached realistic rows.
 
 import { NextRequest, NextResponse } from "next/server";
 import { DISTRICTS } from "@/lib/districts";
+import { dataGovInApiKey, fetchDataGovMandiRows } from "@/lib/mandi-data-gov";
+import { normalizeMandiCommodity } from "@/lib/mandi-flow";
 import type { MandiResponse, MandiRow } from "@/lib/types";
 
 const AGMARKNET_URL = "https://api.agmarknet.gov.in/v1/daily-price-arrival/report";
@@ -85,7 +79,10 @@ function resolveCommodity(crop: string): CommodityDef | null {
 // Fetch + cache (per commodity, all-India; state filtered per request)
 // ---------------------------------------------------------------------------
 
-const rowCache = new Map<string, { expires: number; rows: MandiRow[]; live: boolean }>();
+const rowCache = new Map<
+  string,
+  { expires: number; rows: MandiRow[]; live: boolean; source: MandiResponse["source"] }
+>();
 
 function istDate(offsetDays: number): string {
   // YYYY-MM-DD in IST (en-CA locale format)
@@ -158,19 +155,76 @@ async function fetchAgmarknetRows(def: CommodityDef): Promise<MandiRow[]> {
   return rows.sort((a, b) => dateKey(b.arrivalDate) - dateKey(a.arrivalDate) || b.modalPrice - a.modalPrice);
 }
 
-async function getRows(def: CommodityDef): Promise<{ rows: MandiRow[]; live: boolean }> {
-  const hit = rowCache.get(def.commodity);
-  if (hit && Date.now() < hit.expires) return { rows: hit.rows, live: hit.live };
-  try {
-    const rows = await fetchAgmarknetRows(def);
-    rowCache.set(def.commodity, { expires: Date.now() + CACHE_TTL_MS, rows, live: true });
-    return { rows, live: true };
-  } catch (err) {
-    console.error("mandi agmarknet error:", err instanceof Error ? err.message : err);
-    const rows = fallbackRows(def.name, def.fallbackModal, null);
-    rowCache.set(def.commodity, { expires: Date.now() + FAILURE_TTL_MS, rows, live: false });
-    return { rows, live: false };
+async function fetchDataGovRows(
+  commodityName: string,
+  requestedState: string | null,
+  requestedDistrict: string | null,
+): Promise<MandiRow[]> {
+  const apiKey = dataGovInApiKey();
+  if (!apiKey) throw new Error("DATA_GOV_IN_API_KEY not configured");
+  return fetchDataGovMandiRows({
+    commodity: commodityName,
+    state: requestedState?.trim() || null,
+    district: requestedDistrict?.trim() || null,
+    apiKey,
+  });
+}
+
+async function getRows(
+  commodityName: string,
+  def: CommodityDef | null,
+  requestedState: string | null,
+  requestedDistrict: string | null,
+): Promise<{ rows: MandiRow[]; live: boolean; source: MandiResponse["source"] }> {
+  const cacheKey = `${commodityName}:${requestedState ?? "all"}:${requestedDistrict ?? "all"}`;
+  const hit = rowCache.get(cacheKey);
+  if (hit && Date.now() < hit.expires) {
+    return { rows: hit.rows, live: hit.live, source: hit.source };
   }
+
+  if (dataGovInApiKey()) {
+    try {
+      const rows = await fetchDataGovRows(commodityName, requestedState, requestedDistrict);
+      rowCache.set(cacheKey, {
+        expires: Date.now() + CACHE_TTL_MS,
+        rows,
+        live: true,
+        source: "data.gov.in",
+      });
+      return { rows, live: true, source: "data.gov.in" };
+    } catch (err) {
+      console.error("mandi data.gov.in error:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  if (def) {
+    try {
+      const rows = await fetchAgmarknetRows(def);
+      rowCache.set(cacheKey, {
+        expires: Date.now() + CACHE_TTL_MS,
+        rows,
+        live: true,
+        source: "agmarknet",
+      });
+      return { rows, live: true, source: "agmarknet" };
+    } catch (err) {
+      console.error("mandi agmarknet error:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  if (requestedDistrict?.trim()) {
+    return { rows: [], live: false, source: "cached" };
+  }
+
+  const fallbackModal = def?.fallbackModal ?? 3500;
+  const rows = fallbackRows(commodityName, fallbackModal, requestedState);
+  rowCache.set(cacheKey, {
+    expires: Date.now() + FAILURE_TTL_MS,
+    rows,
+    live: false,
+    source: "cached",
+  });
+  return { rows, live: false, source: "cached" };
 }
 
 // ---------------------------------------------------------------------------
@@ -181,14 +235,16 @@ function fallbackRows(commodityName: string, modal: number, state: string | null
   const stateDistricts = state
     ? DISTRICTS.filter((d) => d.state.toLowerCase() === state.toLowerCase())
     : [];
+  // Never invent a default district (e.g. Sehore). Only synthesize rows for a known state filter.
   const places =
     stateDistricts.length > 0
-      ? stateDistricts.slice(0, 3).map((d) => ({ market: d.blocks[0] ?? d.district, district: d.district, state: d.state }))
-      : [
-          { market: "Sehore", district: "Sehore", state: "Madhya Pradesh" },
-          { market: "Vidisha", district: "Vidisha", state: "Madhya Pradesh" },
-          { market: "Ashta", district: "Sehore", state: "Madhya Pradesh" },
-        ];
+      ? stateDistricts.slice(0, 3).map((d) => ({
+          market: d.blocks[0] ?? d.district,
+          district: d.district,
+          state: d.state,
+        }))
+      : [];
+  if (places.length === 0) return [];
   const today = istDateDdMmYyyy();
   return places.map((p, i) => {
     const m = Math.round(modal * (1 + (i - 1) * 0.018));
@@ -212,45 +268,47 @@ function fallbackRows(commodityName: string, modal: number, state: string | null
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
-  const crop = sp.get("crop") ?? "Wheat";
-  const requestedState = sp.get("state");
+  const rawCrop = sp.get("crop") ?? "Wheat";
+  const crop = normalizeMandiCommodity(rawCrop);
+  const requestedState = sp.get("state")?.trim() || null;
+  const requestedDistrict = sp.get("district")?.trim() || null;
 
   const def = resolveCommodity(crop);
-  if (!def) {
-    // Crop not traded on Agmarknet under a known id — honest cached quote.
-    const response: MandiResponse = {
-      rows: fallbackRows(crop, 3500, requestedState),
-      commodity: crop,
-      requestedState,
-      generatedAt: new Date().toISOString(),
-      source: "cached",
-    };
-    return NextResponse.json(response);
-  }
+  const commodityName = def?.name ?? crop;
 
-  const { rows: allRows, live } = await getRows(def);
+  const { rows: allRows, live, source } = await getRows(
+    commodityName,
+    def,
+    requestedState,
+    requestedDistrict,
+  );
 
   let rows = allRows;
+
+  if (requestedDistrict) {
+    const wantDist = requestedDistrict.toLowerCase();
+    const byDistrict = rows.filter((r) => r.district.trim().toLowerCase() === wantDist);
+    if (byDistrict.length > 0) rows = byDistrict;
+  }
+
   if (requestedState) {
-    const want = requestedState.trim().toLowerCase();
-    const filtered = allRows.filter((r) => r.state.trim().toLowerCase() === want);
+    const want = requestedState.toLowerCase();
+    const filtered = rows.filter((r) => r.state.trim().toLowerCase() === want);
     if (filtered.length > 0) {
       rows = filtered;
-    } else if (live) {
-      // Live feed but this state hasn't reported (e.g. Karnataka uses ReMS) —
-      // keep all-India rows so the farmer still sees a real market quote.
+    } else if (live && !requestedDistrict) {
       rows = allRows;
-    } else {
-      rows = fallbackRows(def.name, def.fallbackModal, requestedState);
+    } else if (!live && !requestedDistrict) {
+      rows = fallbackRows(commodityName, def?.fallbackModal ?? 3500, requestedState);
     }
   }
 
   const response: MandiResponse = {
     rows: representativeFirst(rows).slice(0, 15),
-    commodity: def.name,
+    commodity: commodityName,
     requestedState,
     generatedAt: new Date().toISOString(),
-    source: live ? "agmarknet" : "cached",
+    source: rows.length > 0 ? source : live ? source : "cached",
   };
   return NextResponse.json(response);
 }
@@ -260,12 +318,15 @@ export async function GET(req: NextRequest) {
 // reorder so rows[0] is the median-modal row of the latest arrival date, and
 // degenerate single-quote rows lose to real spreads when alternatives exist.
 function representativeFirst(rows: MandiRow[]): MandiRow[] {
-  if (rows.length <= 1) return rows;
-  const latest = dateKey(rows[0].arrivalDate);
-  let day = rows.filter((r) => dateKey(r.arrivalDate) === latest);
+  const priced = rows.filter((r) => r && r.modalPrice > 0);
+  if (priced.length <= 1) return priced;
+  const latest = dateKey(priced[0].arrivalDate);
+  let day = priced.filter((r) => dateKey(r.arrivalDate) === latest);
+  if (day.length === 0) day = priced;
   const spreads = day.filter((r) => !(r.minPrice === r.maxPrice && r.maxPrice === r.modalPrice));
   if (spreads.length > 0) day = spreads;
   const sorted = [...day].sort((a, b) => a.modalPrice - b.modalPrice);
   const median = sorted[Math.floor(sorted.length / 2)];
-  return [median, ...rows.filter((r) => r !== median)];
+  if (!median) return priced.slice(0, 15);
+  return [median, ...priced.filter((r) => r !== median)];
 }

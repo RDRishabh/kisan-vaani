@@ -21,22 +21,19 @@ serves reviewed cached content), but live AI needs `GEMINI_API_KEY`.
 | Variable | Required for | Where to get it | Behaviour if absent |
 |---|---|---|---|
 | `GEMINI_API_KEY` | All AI: advisory, photo diagnosis, voice language detection, crop recommendation | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — free tier works; billing-enabled avoids daily quota throttles | Routes serve reviewed cached advisories, labelled as such |
-| `GEMINI_MODEL` | Optional override | — | Defaults to `gemini-2.5-flash` |
-| `GEMINI_MODEL_FALLBACK` | Auto-retry on quota throttle (429) | — | Defaults to `gemini-2.5-flash-lite` |
+| `GEMINI_MODEL` | Optional override | — | Defaults to `gemini-3.5-flash` (AI Studio free tier) |
+| `GEMINI_MODEL_FALLBACK` | Auto-retry on quota (429) or unavailable model (404) | — | Defaults to `gemini-3.1-flash-lite` |
 | `DATABASE_URL` | Persistence: escalation tickets, broadcasts, query log | [neon.tech](https://neon.tech) free Postgres (any Postgres works). Tables `kv_tickets`, `kv_broadcasts`, `kv_queries` auto-create on first use | Falls back to per-instance memory; app still runs |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | Real phone line: IVR, SMS, WhatsApp webhooks (signature validation + media download) | [console.twilio.com](https://console.twilio.com) — trial account is enough for inbound | Telephony endpoints skip signature validation (dev mode); the rest of the app is unaffected |
+| `DATA_GOV_IN_API_KEY` | Live mandi prices via [data.gov.in](https://data.gov.in) (official Agmarknet republication) | Register at data.gov.in → My Account → Generate API Key. Optional: `DATA_GOV_IN_MANDI_RESOURCE_ID` (default `35985678-0d79-46b4-9ed6-6f13308a1d24`) | Falls back to keyless Agmarknet 2.0 API, then cached quotes |
 
-**Keyless live data sources** (called server-side, nothing to configure):
-Open-Meteo (16-day forecasts, ET₀, soil moisture) · ISRIC SoilGrids (250 m
-satellite soil properties) · NASA POWER (agroclimate) · Agmarknet 2.0 (same-day
-mandi prices) · Soil Health Card GraphQL (district nutrient records, GoI).
-Endpoint details, quirks, and verification notes: `research/*.json`.
+**Other keyless live data sources:** Open-Meteo · ISRIC SoilGrids · NASA POWER · Agmarknet 2.0 (mandi fallback) · Soil Health Card GraphQL. Details in `research/*.json`.
 
 ## 3. Deploying (Vercel)
 
 ```bash
 vercel link
-for K in GEMINI_API_KEY DATABASE_URL TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM_NUMBER; do
+for K in GEMINI_API_KEY DATA_GOV_IN_API_KEY DATABASE_URL TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM_NUMBER; do
   vercel env add $K production
 done
 vercel --prod

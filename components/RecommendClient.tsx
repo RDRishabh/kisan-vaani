@@ -802,7 +802,13 @@ function MandiStrip({ crop, state }: { crop: string; state: string }) {
           <span>
             <b className="text-forest">₹{row.modalPrice.toLocaleString("en-IN")}/q</b>
             <span className="text-ink-soft"> modal · {row.market} mandi · {row.arrivalDate === todayDdMmYyyy() ? "today" : row.arrivalDate} · </span>
-            <span className="text-[11px] font-semibold">{source === "agmarknet" ? "Agmarknet · live" : "Agmarknet · cached"}</span>
+            <span className="text-[11px] font-semibold">
+              {source === "data.gov.in"
+                ? "data.gov.in · live"
+                : source === "agmarknet"
+                  ? "Agmarknet · live"
+                  : "Agmarknet · cached"}
+            </span>
           </span>
         )
       )}

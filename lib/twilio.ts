@@ -5,9 +5,39 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
-import { generateContentResilient } from "@/lib/genai";
 import { FALLBACK_ADVISORY } from "@/lib/data";
+import {
+  followupPrompt,
+  isOtherOptionChoice,
+  resolveOptionChoice,
+  runAdvisoryTurn,
+  SMS_ASK_FREEFORM,
+  SMS_FOLLOWUP_MENU,
+  splitSmsAdvisoryParts,
+  type AdvisoryMessage,
+} from "@/lib/advisory-flow";
+import {
+  clearAdvisorySession,
+  getAdvisorySession,
+  saveAdvisorySession,
+} from "@/lib/advisory-session";
+import {
+  extractPlaceFromWeatherQuery,
+  isMandiIntent,
+  isWeatherIntent,
+  SMS_ASK_WEATHER_DISTRICT,
+} from "@/lib/helpline-intent";
+import { handleMandiInput, mandiEntryMenu, type MandiMenuHandlerResult } from "@/lib/mandi-handler";
+import {
+  appBaseUrl,
+  fetchMandiPriceText,
+  startMandiContext,
+} from "@/lib/mandi-flow";
+import {
+  fetchOpenWeatherSmart,
+  formatWeatherAdvisoryHi,
+  openWeatherApiKey,
+} from "@/lib/openweather";
 
 // Twilio signs: base64(HMAC-SHA1(authToken, url + concat(sortedKeys.map(k => k + params[k])))).
 // The URL must match what Twilio requested — reconstructed from the forwarded
@@ -76,35 +106,209 @@ export function forbiddenTwiml(): NextResponse {
 // Hindi fallback so the number always replies.
 const TEXT_ADVISORY_BUDGET_MS = 12_000;
 
-export async function textAdvisory(body: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return FALLBACK_ADVISORY.hi.sms;
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const result = await Promise.race([
-      generateContentResilient(ai, {
-        contents: `A farmer sent this message to the KisanVaani crop advisory line (may be shorthand code or a full sentence): "${body}"`,
-        config: {
-          systemInstruction: `You are KisanVaani, an expert Indian agricultural extension advisor (like a Krishi Vigyan Kendra scientist). You give practical, safe, low-cost advice suited to smallholder farmers in India. Prefer IPM/organic first, then chemical options with exact dosages.
-Reply in the same Indian language as the farmer's message, in its native script. If the message is Latin-script shorthand or English crop codes, reply in Hindi (Devanagari script).
-This reply will be sent as an SMS to a basic feature phone.
-- Maximum 300 characters total.
-- Include: likely problem, 1-2 concrete actions with exact dosage (e.g. "नीम तेल 5ml/L"), and the Kisan Call Centre number 1800-180-1551.
-- No markdown, no emojis.`,
-          temperature: 0.4,
-        },
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("gemini budget exceeded")), TEXT_ADVISORY_BUDGET_MS),
-      ),
-    ]);
-    const text = result.text?.trim();
-    if (!text) throw new Error("empty response");
-    return text.slice(0, 320);
-  } catch (err) {
-    console.error("telephony text advisory gemini error:", err instanceof Error ? err.message : err);
-    return FALLBACK_ADVISORY.hi.sms;
+async function smsWeatherReply(phone: string, place: string, lang: string): Promise<string[]> {
+  const follow = followupPrompt("sms");
+  if (!openWeatherApiKey()) {
+    const msg = "मौसम सेवा अभी उपलब्ध नहीं है। कृपया थोड़ी देर बाद फिर कोशिश करें।";
+    saveAdvisorySession(phone, {
+      history: [],
+      options: follow.options,
+      phase: "followup",
+      lang,
+      lastAnswer: msg,
+    });
+    return [msg, follow.text];
   }
+
+  try {
+    const weather = await fetchOpenWeatherSmart(place);
+    const text = formatWeatherAdvisoryHi(weather);
+    saveAdvisorySession(phone, {
+      history: [],
+      options: follow.options,
+      phase: "followup",
+      lang,
+      lastAnswer: text,
+    });
+    return [text, follow.text];
+  } catch (err) {
+    console.error("sms weather error:", err instanceof Error ? err.message : err);
+    const msg = "मौसम अभी उपलब्ध नहीं है। कृपया थोड़ी देर बाद फिर कोशिश करें।";
+    saveAdvisorySession(phone, {
+      history: [],
+      options: follow.options,
+      phase: "followup",
+      lang,
+      lastAnswer: msg,
+    });
+    return [msg, follow.text];
+  }
+}
+
+function startSmsMandi(phone: string, lang: string): string[] {
+  const entry = mandiEntryMenu("sms");
+  saveAdvisorySession(phone, {
+    history: [],
+    options: entry.options,
+    phase: "mandi",
+    mandi: entry.mandi,
+    lang,
+    lastAnswer: entry.text,
+  });
+  return [entry.text];
+}
+
+export async function textAdvisory(body: string, from?: string): Promise<string[]> {
+  const phone = from ?? "anonymous";
+  const session = getAdvisorySession(phone);
+  const history = session?.history ?? [];
+  const phase = session?.phase;
+  const priorOptions = session?.options;
+  const lang = session?.lang ?? "hi";
+
+  // Follow-up menu — handle 1 / 2 / 3 strictly before running a new advisory turn.
+  if (phase === "followup" && priorOptions?.length) {
+    const choice = resolveOptionChoice(body, priorOptions);
+    if (choice) {
+      if (/done|bas|dhanyavaad|thank/i.test(choice)) {
+        clearAdvisorySession(phone);
+        return ["किसानवाणी: धन्यवाद। कभी भी 1800-180-1551 पर कॉल करें।"];
+      }
+      if (/mandi|bhav|price/i.test(choice)) {
+        return startSmsMandi(phone, lang);
+      }
+      if (choice === priorOptions[0] || /aur|krishi|samasy|prashn|fasal/i.test(choice)) {
+        saveAdvisorySession(phone, {
+          history: [],
+          options: [],
+          phase: undefined,
+          lang,
+          lastAnswer: "अपनी फसल की समस्या या कृषि से जुड़ा प्रश्न लिखकर भेजें।",
+        });
+        return ["अपनी फसल की समस्या या कृषि से जुड़ा प्रश्न लिखकर भेजें।"];
+      }
+    }
+  }
+
+  // Weather — awaiting place name, or free-text weather intent (OpenWeatherMap).
+  if (phase === "weather") {
+    return smsWeatherReply(phone, body.trim(), lang);
+  }
+
+  // Mandi — pan-India freeform: district → (state if needed) → crop.
+  if (phase === "mandi") {
+    const mandi = session?.mandi ?? startMandiContext();
+    const result = handleMandiInput(body, mandi, "sms", false);
+
+    if (result.kind === "price") {
+      const { text: priceText } = await fetchMandiPriceText(
+        result.commodity,
+        result.state,
+        appBaseUrl(),
+        TEXT_ADVISORY_BUDGET_MS,
+        result.district,
+      );
+      const follow = followupPrompt("sms");
+      const fullReply = `${priceText}\n\n${follow.text}`;
+      saveAdvisorySession(phone, {
+        history: session?.history ?? [],
+        options: follow.options,
+        phase: "followup",
+        lang,
+        lastAnswer: fullReply,
+      });
+      return [priceText, follow.text];
+    }
+
+    const menu = result as MandiMenuHandlerResult;
+    saveAdvisorySession(phone, {
+      history: session?.history ?? [],
+      options: menu.options,
+      phase: "mandi",
+      mandi: menu.mandi,
+      lang,
+      lastAnswer: menu.text,
+    });
+    return menu.kind === "invalid" ? [menu.text.split("\n\n")[0] ?? menu.text, menu.text] : [menu.text];
+  }
+
+  // Free-text intents — before Gemini clarify (so "Weather in Noida" never becomes a crop menu).
+  if (isWeatherIntent(body)) {
+    const place = extractPlaceFromWeatherQuery(body);
+    if (place) return smsWeatherReply(phone, place, lang);
+    saveAdvisorySession(phone, {
+      history: [],
+      options: [],
+      phase: "weather",
+      lang,
+      lastAnswer: SMS_ASK_WEATHER_DISTRICT,
+    });
+    return [SMS_ASK_WEATHER_DISTRICT];
+  }
+
+  if (isMandiIntent(body)) {
+    return startSmsMandi(phone, lang);
+  }
+
+  // Clarify: options don't match — ask them to write freely (no SMS 0-repeat).
+  if (phase === "clarify" && isOtherOptionChoice(body.trim())) {
+    saveAdvisorySession(phone, {
+      history,
+      options: [],
+      phase: "clarify",
+      lang: session?.lang ?? "hi",
+      lastAnswer: SMS_ASK_FREEFORM,
+    });
+    return [SMS_ASK_FREEFORM];
+  }
+
+  let farmerText = body.trim();
+  const mapped = resolveOptionChoice(farmerText, priorOptions);
+  if (mapped) farmerText = mapped;
+
+  const turn = await Promise.race([
+    runAdvisoryTurn({
+      query: farmerText,
+      history,
+      lang: session?.lang ?? "hi",
+      channel: "sms",
+    }),
+    new Promise<Awaited<ReturnType<typeof runAdvisoryTurn>>>((_, reject) =>
+      setTimeout(() => reject(new Error("gemini budget exceeded")), TEXT_ADVISORY_BUDGET_MS),
+    ),
+  ]).catch((err) => {
+    console.error("telephony text advisory error:", err instanceof Error ? err.message : err);
+    return { phase: "advise" as const, text: FALLBACK_ADVISORY.hi.sms, source: "fallback" as const };
+  });
+
+  const nextHistory: AdvisoryMessage[] = [...history, { role: "farmer", text: farmerText }];
+
+  if (turn.phase === "clarify") {
+    saveAdvisorySession(phone, {
+      history: [...nextHistory, { role: "advisor", text: turn.text, kind: "clarify" }],
+      options: turn.options,
+      phase: "clarify",
+      lang: session?.lang ?? "hi",
+      lastAnswer: turn.text,
+    });
+    return [turn.text.slice(0, 480)];
+  }
+
+  const follow = followupPrompt("sms");
+  const [advicePart, menuPart] = splitSmsAdvisoryParts(turn.text);
+  const fullReply = `${advicePart}\n\n${menuPart}`;
+  saveAdvisorySession(phone, {
+    history: [
+      ...nextHistory,
+      { role: "advisor", text: turn.text, kind: "advise" },
+      { role: "advisor", text: follow.text, kind: "followup" },
+    ],
+    options: follow.options,
+    phase: "followup",
+    lang,
+    lastAnswer: fullReply,
+  });
+  return [advicePart, menuPart];
 }
 
 // Base URL for self-calls to sibling API routes (mandi, diagnose).

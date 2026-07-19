@@ -106,7 +106,7 @@ export type MandiResponse = {
   commodity: string;
   requestedState: string | null;
   generatedAt: string;
-  source: "agmarknet" | "cached";
+  source: "data.gov.in" | "agmarknet" | "cached";
 };
 
 export type VoiceResult = {

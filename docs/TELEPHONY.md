@@ -6,7 +6,7 @@ The demo number **+1 254 272 6372** answers real calls, SMS and WhatsApp with Ki
 
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
-| `/api/telephony/voice` | POST (form-encoded) | Voice IVR. Stateless: `?step=menu` and `?step=answer` drive the menu. Hindi greeting → press 1 / speak a problem (Gemini advisory read aloud) or press 2 (live soybean mandi price for Madhya Pradesh). |
+| `/api/telephony/voice` | POST (form-encoded) | Voice IVR. Stateless: `?step=menu` and `?step=answer` drive the menu. Hindi greeting → press 1 / speak a problem (Gemini advisory) or press 2 (pan-India mandi: speak district → crop → live data.gov.in price). |
 | `/api/telephony/sms` | POST (form-encoded) | SMS advisory. `Body` → Gemini (≤300 chars, native script; Latin shorthand answered in Hindi Devanagari). |
 | `/api/telephony/whatsapp` | POST (form-encoded) | WhatsApp sandbox. Photo (`NumMedia>0`) → crop diagnosis via `/api/diagnose`; text → same advisory as SMS. |
 
